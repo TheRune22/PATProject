@@ -23,5 +23,6 @@
     <orderEntry type="library" name="deepseq-1.4.8.1" level="project" />
     <orderEntry type="library" name="mtl-2.3.1" level="project" />
     <orderEntry type="library" name="transformers-0.6.1.0" level="project" />
+    <orderEntry type="library" name="containers-0.6.7" level="project" />
   </component>
 </module>
