@@ -20,8 +20,6 @@ import Control.Arrow ((>>>), first)
 import Data.Function ((&))
 
 
---showBTAResult :: H.Exp () -> [String] -> (String, BindingTime)
---showBTAResult :: H.Exp H.SrcSpanInfo -> [String] -> t
 showBTAResult :: H.Exp H.SrcSpanInfo -> [String] -> (BindingTime, String, [String])
 showBTAResult exp dynamicNames =
   let dynamicNames' = fmap (QNameLookup . H.UnQual H.noSrcSpan . H.Ident H.noSrcSpan) dynamicNames in
@@ -31,7 +29,6 @@ showBTAResult exp dynamicNames =
   & fst
   & fmap H.prettyPrint
   & \(a, b) -> (a, b, dynamicNames)
-
 
 
 main :: IO ()
@@ -45,4 +42,4 @@ main = do
 --  print $ showBTAResult [hExp| if a then b else c |] []
 --  print $ showBTAResult [hExp| -a |] []
 --  print $ showBTAResult [hExp| -a |] ["a"]
-  print $ showBTAResult [hExp| [1, 2, a] |] ["a"]
+--  print $ showBTAResult [hExp| [1, 2, a] |] ["a"]

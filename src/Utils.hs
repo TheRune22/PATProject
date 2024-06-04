@@ -96,8 +96,8 @@ bracketTH e = H.BracketExp H.noSrcSpan $ H.ExpBracket H.noSrcSpan e
 spliceTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
 -- TODO: only add parens where necessary?
 -- Add extra parenthesis just in case, since can be problematic in e.g. NegApp
---spliceTH e = H.Paren H.noSrcSpan $ H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
-spliceTH e = H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
+spliceTH e = H.Paren H.noSrcSpan $ H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
+--spliceTH e = H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
 
 -- TODO: check if this is actually useful frequently
 ($|$) :: (H.Exp H.SrcSpanInfo -> t) -> H.Exp H.SrcSpanInfo -> t

@@ -190,16 +190,7 @@ analyzeExp (Lit info lit) =
 --analyzeExp (InfixApp info exp1 qOp exp2) = undefined
 -- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
 --analyzeExp (App info exp1 exp2) = undefined
-analyzeExp (NegApp info e) = do
---  TODO: extract this pattern to helper/monad? maybe similar to either?
-  (eBT, eAnalyzed) <- analyzeExp e
-  if eBT == Dynamic
-  then
-    -- TODO: simply always add parens around splice, not only here?
-    pure (Dynamic, bracketTH $ NegApp info $ Paren noSrcSpan $|$ eAnalyzed)
-  else
-    pure (Static, NegApp info eAnalyzed)
--- TODO:
+analyzeExp (NegApp info e) = analyzeSimpleExp (head >>> NegApp info) [e]
 --analyzeExp (Lambda info pats exp) = undefined
 --analyzeExp (Let info binds exp) = undefined
 analyzeExp (If info condExp thenExp elseExp) = do
@@ -208,40 +199,50 @@ analyzeExp (If info condExp thenExp elseExp) = do
   (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
 
   if Dynamic `elem` [condBT, thenBT, elseBT]
+  then
+    -- value of if is dynamic
+    let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed) in
+    let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed) in
+    if condBT == Static
     then
-      -- value of if is dynamic
-      let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed) in
-      let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed) in
-      if condBT == Static
-      then
-        -- condition is static, can be evaluated at compile time
-        pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
-      else
-        -- condition is dynamic, must be evaluated at runtime
-        -- TODO: prevent unfolding in this case? must do before analyzing branches, could use reader
---        pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
-        pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
+--      1
+      -- condition is static, can be evaluated at compile time
+      pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
     else
-      -- fully static if
-      pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
-analyzeExp (List info exps) = do
-  analyzeRes <- mapM analyzeExp exps
-  let (bts, analyzedExps) = unzip analyzeRes
-  if Dynamic `elem` bts
-  then
-    pure (Dynamic, bracketTH $ List info $ fmap (liftIfStatic >>> spliceTH) analyzeRes)
+--      2
+      -- condition is dynamic, must be evaluated at runtime
+      -- TODO: prevent unfolding in this case? must do before analyzing branches, could use reader
+--        pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
+      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
   else
-    pure (Static, List info analyzedExps)
---    TODO: merge with above?
-analyzeExp (Tuple info boxed exps) = do
-  analyzeRes <- mapM analyzeExp exps
-  let (bts, analyzedExps) = unzip analyzeRes
---  TODO: check if this is correct, or should check for Static instead
-  if Dynamic `elem` bts
-  then
-    pure (Dynamic, bracketTH $ Tuple info boxed $ fmap (liftIfStatic >>> spliceTH) analyzeRes)
-  else
-    pure (Static, Tuple info boxed analyzedExps)
+--    3
+    -- fully static if
+    pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
+
+--  TODO: could rewrite like this and use analyzeSimpleExp to handle 2 cases, only do if dynamic cond need not be handled separately
+--  if condBT == Static && Dynamic `elem` [thenBT, elseBT]
+--  then
+----    1
+--  else
+--    if Dynamic `elem` [condBT, thenBT, elseBT]
+--    then
+----      2
+--    else
+----      3
+--
+--  if condBT == Dynamic || (thenBT == Static && elseBT == Static)
+--  then
+--    if Dynamic `elem` [condBT, thenBT, elseBT]
+--    then
+----      2
+--    else
+----      3
+--  else
+----    1
+
+analyzeExp (List info exps) = analyzeSimpleExp (List info) exps
+analyzeExp (Tuple info boxed exps) = analyzeSimpleExp (Tuple info boxed) exps
+
 --  TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
 -- case, multiif, paren, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
 -- Try self application to get missing cases
@@ -253,6 +254,16 @@ analyzeExp _ = notImplementedError
 
 
 -- Helpers
+analyzeSimpleExp :: ([Exp SrcSpanInfo] -> Exp SrcSpanInfo) -> [Exp SrcSpanInfo] -> BTAMonad SrcSpanInfo (BindingTime, Exp SrcSpanInfo)
+analyzeSimpleExp constructor exps = do
+  analyzeRes <- mapM analyzeExp exps
+  let (bts, analyzedExps) = unzip analyzeRes
+  if Dynamic `elem` bts
+  then
+    pure (Dynamic, bracketTH $ constructor $ fmap (liftIfStatic >>> spliceTH) analyzeRes)
+  else
+    pure (Static, constructor analyzedExps)
+
 
 liftIfStatic :: (BindingTime, Exp SrcSpanInfo) -> Exp SrcSpanInfo
 liftIfStatic (Static, e) = liftTH e
