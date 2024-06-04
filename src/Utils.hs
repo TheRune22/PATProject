@@ -88,10 +88,24 @@ hImports = QuasiQuoter { quoteExp = H.parseImportDecl >>> H.fromParseResult >>> 
 
 
 -- From an expression generate a corresponding expression which generates the original expression using TH
-wrapTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
-wrapTH exp = H.BracketExp H.noSrcSpan $ H.TExpBracket H.noSrcSpan exp
+bracketTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+bracketTH e = H.BracketExp H.noSrcSpan $ H.ExpBracket H.noSrcSpan e
 -- TODO: avoid use of brackets to allow nesting using something like this?
---wrapTH exp = H.fromParseResult $ H.parseExp $ show $ liftData exp
+--bracketTH e = H.fromParseResult $ H.parseExp $ show $ liftData e
+
+spliceTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+-- TODO: only add parens where necessary?
+-- Add extra parenthesis just in case, since can be problematic in e.g. NegApp
+--spliceTH e = H.Paren H.noSrcSpan $ H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
+spliceTH e = H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e
+
+-- TODO: check if this is actually useful frequently
+($|$) :: (H.Exp H.SrcSpanInfo -> t) -> H.Exp H.SrcSpanInfo -> t
+f $|$ e = f (spliceTH e)
+
+liftTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+-- TODO: could be qualified? ever need parens here?
+liftTH = H.App H.noSrcSpan (H.Var H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "lift")
 
 
 -- Error used for not implemented functionality

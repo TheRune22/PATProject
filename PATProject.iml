@@ -24,5 +24,10 @@
     <orderEntry type="library" name="mtl-2.3.1" level="project" />
     <orderEntry type="library" name="transformers-0.6.1.0" level="project" />
     <orderEntry type="library" name="containers-0.6.7" level="project" />
+    <orderEntry type="library" name="composition-extra-2.1.0" level="project" />
+    <orderEntry type="library" name="composition-1.0.2.2" level="project" />
+    <orderEntry type="library" name="contravariant-1.5.5" level="project" />
+    <orderEntry type="library" name="StateVar-1.2.2" level="project" />
+    <orderEntry type="library" name="stm-2.5.1.0" level="project" />
   </component>
 </module>
