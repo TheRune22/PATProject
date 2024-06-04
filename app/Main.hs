@@ -7,20 +7,23 @@ module Main (main) where
 -- TODO: clean main, this is just for testing
 -- TODO: separate BTA (maybe both TH and normal), specializer, and runner in separate executables
 
+import BTA
+import Utils
+
 import Language.Haskell.Exts
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
 import Debug.Trace
-
-import BTA
-import Utils
 import Control.Monad.Reader
+import Control.Monad.Writer.Lazy
+import Control.Arrow ((>>>))
+import Data.Function ((&))
 
 
 
 main :: IO ()
 main = do
---  print [hExp| 1 |]
+  print $ [hExp| reader 1 2 |]
 --  print $ fromParseResult $ parseExp "1"
 
 --  parseRes <- parseFile "programs/Pow.hs"
@@ -28,6 +31,6 @@ main = do
 
 --  print $ prettyPrint (Lit 0 (Int 1 1 "1"))
 
-  print $ prettyPrint $ runReader (analyzeExp [hExp| a |]) [(QNameLookup $ UnQual noSrcSpan (Ident noSrcSpan "a"), Static)]
+--  print $ prettyPrint $ fst $ runWriter $ runReaderT (analyzeExp [hExp| a |]) ([(QNameLookup $ UnQual noSrcSpan (Ident noSrcSpan "a"), Static)], ())
 
 
