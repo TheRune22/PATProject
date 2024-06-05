@@ -177,75 +177,61 @@ bindingTime qName = do
 -- TODO: start here
 
 analyzeExp :: Exp SrcSpanInfo -> BTAMonad SrcSpanInfo (BindingTime, Exp SrcSpanInfo)
+-- Literals are always static
+analyzeExp (Lit info lit) = pure (Static, Lit info lit)
+-- Look up BT for vars
 analyzeExp (Var info qName) = do
   bt <- bindingTime qName
   case bt of
 -- TODO: handle case where this is a (recursive) function call?
     Static -> pure (Static, Var info qName)
     Dynamic -> pure (Dynamic, bracketTH $ Var info qName)
-analyzeExp (Lit info lit) =
--- Literals are always static
-  pure (Static, Lit info lit)
--- TODO:
---analyzeExp (InfixApp info exp1 qOp exp2) = undefined
--- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
---analyzeExp (App info exp1 exp2) = undefined
+-- Simple cases
 analyzeExp (NegApp info e) = analyzeSimpleExp (head >>> NegApp info) [e]
---analyzeExp (Lambda info pats exp) = undefined
---analyzeExp (Let info binds exp) = undefined
+analyzeExp (List info exps) = analyzeSimpleExp (List info) exps
+analyzeExp (Tuple info boxed exps) = analyzeSimpleExp (Tuple info boxed) exps
+-- Control flow
 analyzeExp (If info condExp thenExp elseExp) = do
   (condBT, condExpAnalyzed) <- analyzeExp condExp
   (thenBT, thenExpAnalyzed) <- analyzeExp thenExp
   (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
+  let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed)
+  let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed)
 
-  if Dynamic `elem` [condBT, thenBT, elseBT]
-  then
-    -- value of if is dynamic
-    let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed) in
-    let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed) in
-    if condBT == Static
-    then
---      1
-      -- condition is static, can be evaluated at compile time
-      pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
-    else
---      2
-      -- condition is dynamic, must be evaluated at runtime
-      -- TODO: prevent unfolding in this case? must do before analyzing branches, could use reader
---        pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
-      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
+  if condBT == Dynamic then
+    -- condition is dynamic, must be evaluated at runtime
+    -- TODO: prevent unfolding in this case? must do before analyzing branches, could use reader
+--    pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
+    pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
+  else if thenBT == Dynamic || elseBT == Dynamic then
+    -- condition is static, can be evaluated at compile time, but branches are dynamic
+    pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
   else
---    3
     -- fully static if
     pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
 
 --  TODO: could rewrite like this and use analyzeSimpleExp to handle 2 cases, only do if dynamic cond need not be handled separately
---  if condBT == Static && Dynamic `elem` [thenBT, elseBT]
+--  if condBT == Static && (thenBT == Dynamic || elseBT == Dynamic)
 --  then
-----    1
+--    pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
 --  else
---    if Dynamic `elem` [condBT, thenBT, elseBT]
+----    if Dynamic `elem` [condBT, thenBT, elseBT]
+--    if condBT == Dynamic
 --    then
-----      2
+--      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
 --    else
-----      3
---
---  if condBT == Dynamic || (thenBT == Static && elseBT == Static)
---  then
---    if Dynamic `elem` [condBT, thenBT, elseBT]
---    then
-----      2
---    else
-----      3
---  else
-----    1
+--      pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
 
-analyzeExp (List info exps) = analyzeSimpleExp (List info) exps
-analyzeExp (Tuple info boxed exps) = analyzeSimpleExp (Tuple info boxed) exps
+-- TODO:
+-- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
+--analyzeExp (App info exp1 exp2) = undefined
+--analyzeExp (InfixApp info exp1 qOp exp2) = undefined
+--analyzeExp (Let info binds exp) = undefined
+--analyzeExp (Lambda info pats exp) = undefined
 
---  TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
--- case, multiif, paren, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
--- Try self application to get missing cases
+-- TODO: case, multiif, paren, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
+-- TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
+-- TODO: Try self application to get missing cases
 analyzeExp _ = notImplementedError
 -- TODO: bind static vars in dynamic let binding around this to use as default
 --analyzeExp e = pure (Dynamic, bracketTH e)
