@@ -252,6 +252,10 @@ btaFunc name bts =
   undefined
 
 
+
+-- TODO: reconstruct decl into body generating decl
+-- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
+
 -- TODO: Handle like exp in order to reconstruct decl?
 -- TODO: use this below? or can avoid if reconstructing?
 --lookupFunc :: Name SrcSpanInfo -> Module SrcSpanInfo -> [Decl SrcSpanInfo]
