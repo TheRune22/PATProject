@@ -111,15 +111,13 @@ import Data.Functor.Syntax ((<$$>))
 
 
 
-newtype QNameLookup l = QNameLookup (QName l)
+newtype NameLookup l = NameLookup (Name l)
   deriving (Show)
 
-instance Eq (QNameLookup l) where
---  TODO: how to handle all QName info? different representations could refer to same variable
---  Compare QNames, ignoring SrcSpanInfo
-  QNameLookup n1 == QNameLookup n2 = n1 =~= n2
+instance Eq (NameLookup l) where
+--  Compare Names, ignoring SrcSpanInfo
+  NameLookup n1 == NameLookup n2 = n1 =~= n2
 
--- TODO: just use bool instead?
 -- TODO: map each variable to its binding time, add special cases for functions, are these also seen as vars?
 data BindingTime = Static | Dynamic
   deriving (Eq, Show)
@@ -127,12 +125,10 @@ data BindingTime = Static | Dynamic
 -- TODO: could just be set of dynamic variables, since static is default?
 -- TODO: instantiate l or drop it? probably won't need SrcSpanInfo, but could be used for Division?
 -- TODO: use QName, Name, or String?, drop l?
---type Division l = [QNameLookup l]
-type Division l = [(QNameLookup l, BindingTime)]
---type Division l = Set (QNameLookup l)
+type Division l = [(NameLookup l, BindingTime)]
 
 -- TODO: merge Division and functionEnv if we need to look up functions same way as variables?
-type FunctionEnv l = ()
+--type FunctionEnv l = ()
 
 
 
@@ -143,64 +139,29 @@ type FunctionEnv l = ()
 --type BTAMonad l = Reader (Division l)
 -- TODO: use record for env?
 -- TODO: function env in state instead? flip reader and writer?
-type BTAMonad l = ReaderT (Division l, FunctionEnv l) (Writer [Decl l])
+type BTAMonad l = ReaderT (Division l, Module l) (Writer [Decl l])
 -- TODO: use this instead
 --type BTAMonad l = ReaderT (Division l, Module l) (Writer [Decl l])
 --type BTAMonad l = WriterT [Decl l] (Reader (Division l, FunctionEnv l))
 --type BTAMonad l = RWS (Division l) [Decl l] (FunctionEnv l)
 
+
+getModule :: BTAMonad l (Module l)
+getModule = reader snd
+
+
 -- TODO: should probably avoid SrcSpanInfo here, rename to isDynamic and just return bool?
 bindingTime :: QName SrcSpanInfo -> BTAMonad SrcSpanInfo BindingTime
-bindingTime qName = do
---  isDynamic <- reader $ fst >>> elem (QNameLookup qName)
---  if isDynamic then
---    pure Dynamic
---  else
---    pure Static
-  lookupRes <- reader $ fst >>> lookup (QNameLookup qName)
+bindingTime (UnQual info name) = do
+  lookupRes <- reader $ fst >>> lookup (NameLookup name)
   case lookupRes of
     Just bt -> pure bt
---    If not found, assume static, since probably a static import
+-- If not found, assume static, since probably a static import
     Nothing -> pure Static
+-- TODO: handle differently?
+bindingTime _ = pure Static
 
 
-
-
-
---analyzeModule :: Module SrcSpanInfo -> BTAMonad SrcSpanInfo (Module SrcSpanInfo)
----- TODO: handle other parts of the module
---analyzeModule (Module info moduleHead pragmas imports [decl]) = Module info moduleHead pragmas imports <$> mapM analyzeDecl [decl]
---analyzeModule _ = undefined
---
----- TODO: don't specialize if all args are static or dynamic, just copy code
---analyzeDecl :: Decl SrcSpanInfo -> BTAMonad SrcSpanInfo (Decl SrcSpanInfo)
----- TODO: check FunBind vs PatBind
---analyzeDecl (FunBind info [match]) = FunBind info <$> mapM analyzeMatch [match]
---analyzeDecl _ = undefined
---
---analyzeMatch :: Match SrcSpanInfo -> BTAMonad SrcSpanInfo (Match SrcSpanInfo)
----- TODO: how to handle pats, only do simple cases?
---analyzeMatch (Match info name pats rhs Nothing) = do
-----  TODO: could look up division for name here
---  analyzedRhs <- analyzeRhs rhs
---  pure $ Match info name pats analyzedRhs Nothing
----- TODO: if Let is implemented, also handle binds here in same way?
---analyzeMatch _ = undefined
---
---analyzeRhs :: Rhs SrcSpanInfo -> BTAMonad SrcSpanInfo (Rhs SrcSpanInfo)
---analyzeRhs (UnGuardedRhs info exp) = UnGuardedRhs info <$> analyzeExp exp
---analyzeRhs _ = undefined
-
--- TODO: this should maybe use or replace above
---analyzeFunc funcName dynamicArgs =
--- where to get existing module from, and how to find right function?
--- add signature to set of specialized functions, but first check if already there?
--- initialize environment with dynamic args
--- emit implementation in writer monad
--- return name of specialized function?
--- TODO: take QName or string for function name?
--- TODO: take QName, String or argument numbers for dynamic args?
--- TODO: don't specialize if all args are static or dynamic, just copy code
 
 
 
@@ -250,12 +211,13 @@ analyzeExp (App info exp1 exp2) =
 -- Notes:
 -- initially no unfolding?
   case funExp of
-  Var _ qName -> do
+-- TODO: handle Qualified names?
+  Var _ (UnQual info1 name) -> do
     -- TODO: just use analyzeSimpleExp?
     analyzeRes <- mapM analyzeExp exps
     let (bts, analyzedExps) = unzip analyzeRes
     -- TODO: call BTA recursively
-    btaFunc qName bts
+    btaFunc name bts
     let bt = if Dynamic `elem` bts then Dynamic else Static
     -- TODO: insert call to specializer function in TH instead of just funExp, unless fully static (or fully dynamic?)
     --  Maybe supply arguments properly by undoing listing? probably needs bts as well
@@ -275,13 +237,11 @@ analyzeExp _ = undefined
 
 
 
--- TODO: take QName or string for function name?
--- TODO: take QName, String or argument numbers for dynamic args?
--- TODO: don't specialize if all args are static or dynamic, just copy code
+
 --TODO: rename to analyzeFunc?
-btaFunc :: QName SrcSpanInfo -> [BindingTime] -> BTAMonad SrcSpanInfo ()
-btaFunc qName bts =
--- TODO: where to get existing module from, and how to find right function?
+btaFunc :: Name SrcSpanInfo -> [BindingTime] -> BTAMonad SrcSpanInfo ()
+btaFunc name bts =
+-- TODO: don't specialize if all args are static or dynamic, just copy code?
 -- Check if already analyzed
 -- Lookup qName in module
 -- Translate bts to mapping of qNames for env
@@ -292,11 +252,18 @@ btaFunc qName bts =
   undefined
 
 
+-- TODO: Handle like exp in order to reconstruct decl?
+-- TODO: use this below? or can avoid if reconstructing?
+--lookupFunc :: Name SrcSpanInfo -> Module SrcSpanInfo -> [Decl SrcSpanInfo]
 
+-- TODO: should be able to reconstruct Decl, maybe already do here?
+-- TODO: handle empty, i.e. definition not found?
+prepFunc :: Module SrcSpanInfo -> Name SrcSpanInfo -> [BindingTime] -> [(Division SrcSpanInfo, Exp SrcSpanInfo)]
+prepFunc m n bts =
+  prepModule m & flip runReaderT (n, bts)
 
 
 type PrepMonad = ReaderT (Name SrcSpanInfo, [BindingTime]) [] (Division SrcSpanInfo, Exp SrcSpanInfo)
-
 
 -- TODO: rename?
 -- TODO: do as preprocessing or on demand?
@@ -330,7 +297,7 @@ prepMatch _ = undefined
 
 prepPat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 -- TODO: use Name instead of QName in division?
-prepPat bt (PVar info name) = [(QNameLookup (UnQual noSrcSpan name), bt)]
+prepPat bt (PVar info name) = [(NameLookup name, bt)]
 prepPat bt (PApp info qName pats) = pats >>= prepPat bt
 prepPat bt (PTuple info boxed pats) = pats >>= prepPat bt
 prepPat bt (PList info pats) = pats >>= prepPat bt
