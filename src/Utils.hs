@@ -40,7 +40,7 @@ hImports = QuasiQuoter { quoteExp = H.parseImportDecl >>> H.fromParseResult >>> 
 --nameTHToH (Name (OccName n) NameS) = H.UnQual () (H.Ident () n)
 --nameTHToH (Name (OccName n) (NameQ (ModName m))) = H.Qual () (H.ModuleName () m) (H.Ident () n)
 ---- TODO: handle other cases
---nameTHToH _ = notImplementedError
+--nameTHToH _ = undefined
 --
 --
 --litTHToH :: Lit -> H.Literal ()
@@ -54,7 +54,7 @@ hImports = QuasiQuoter { quoteExp = H.parseImportDecl >>> H.fromParseResult >>> 
 --litTHToH (DoublePrimL d) = H.PrimDouble () d $ show d
 --litTHToH (CharPrimL c) = H.PrimChar () c $ show c
 ---- TODO: handle other cases
---litTHToH _ = notImplementedError
+--litTHToH _ = undefined
 --
 --
 --nameToHExp :: Name -> m (H.Exp ())
@@ -106,9 +106,3 @@ f $|$ e = f (spliceTH e)
 liftTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
 -- TODO: could be qualified? ever need parens here?
 liftTH = H.App H.noSrcSpan (H.Var H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "lift")
-
-
--- Error used for not implemented functionality
-notImplementedError :: a
--- TODO: use undefined instead?
-notImplementedError = error "Not implemented"

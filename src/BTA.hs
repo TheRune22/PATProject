@@ -2,7 +2,11 @@ module BTA where
 
 import Utils
 
+--import Prelude hiding (unzip, head)
+--import Relude
+--import Control.Lens
 import Language.Haskell.Exts
+import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Lazy
 import Control.Monad.RWS.Lazy
@@ -11,10 +15,13 @@ import Debug.Trace (trace)
 import Control.Arrow ((>>>))
 import Data.Function ((&))
 import Data.Functor.Syntax ((<$$>))
+--import Data.List.NonEmpty
 
 
 
 -- Do now
+-- TODO: read about static vs dynamic function calls
+-- TODO: specialized signature as QName and list of binding times (empty list for original function used when all have same BT, or still need to distinguish?)
 -- TODO: implement handling of function calls in analyzeExp
 -- TODO: function for specializing single function name given dynamic args, maybe returning name of specialized function?
 -- TODO: add input mudule to reader, or just decs, or map of names to bodies as exps?
@@ -24,6 +31,18 @@ import Data.Functor.Syntax ((<$$>))
 -- TODO: Reader or state for keeping track of implemented functions, maybe mapping function name and dynamic args to actual name of implementation?
 -- TODO: How to determine binding time of function call?
 -- TODO: lift full body if fully static, in order to still return Q Exp?
+-- TODO: use explicit division of all args, should make other parts easier
+-- TODO: copy original function definition
+-- TODO: handle pattern matching? simply inherit BT? can different parts of a pattern have different BT?
+-- TODO: how to figure out which specializations to do?
+-- TODO: add (hardcoded) prelude to generated file? containing e.g. function resolver
+-- TODO: could just insert lambdas to avoid function resolution, but what about recursion?
+-- TODO: add specializations by side effects during specialization? generated definitions then have type m Q Exp?
+-- TODO:    generated program should then have a function taking name and args, returning specialized function call along with any generated definitions
+-- TODO:    could use Code monadic actions
+-- TODO: avoid quotes in order to avoid Q monad?
+-- TODO: functions for getting suffixed names allowing for ensuring unique in the future
+
 
 -- Do later
 -- TODO: check if infinite unfolding is actually a problem
@@ -35,7 +54,6 @@ import Data.Functor.Syntax ((<$$>))
 -- TODO: implement missing pattern matches
 -- TODO: take map of function name to dynamic args, enabling handling multiple decls at once? could just map over functions to handle instead?
 -- TODO: use ExpBracket or TExpBracket?
--- TODO: copy original function definition? just import or duplicate?
 -- TODO: must also know name of function being specialized, and the name of the specialized function for recursion, or can all functions be handled equally?
 -- TODO: need to be able to map original function names to specialized names? could be done by a function created at specialization?
 -- TODO: must keep track of values that must be specialized to? should be done at specialization, unless simply inserting lambdas instead of function calls
@@ -55,12 +73,19 @@ import Data.Functor.Syntax ((<$$>))
 -- TODO: add imports to generated file: TH, lift
 -- TODO: try using typed brackets?
 -- TODO: look into stuff like map fusions, see supercompiler article, static function rules
--- TODO: check for undefined, notImplementedError
+-- TODO: check for undefined
 -- TODO: handle functions being used as vars
 -- TODO: only add parens in splices where necessary, or do always?
 -- TODO: monad for handling common BTA patterns, somewhat similar to either
 -- TODO: just leave unchanged as default? could just leave portion as dynamic, supplying any static values as arguments statically in a lambda
 -- TODO:    would need to know which vars are static, get from division if mapping, or could be determined at specialization? maybe not with lets
+-- TODO: could specialize lambdas by binding to names and replacing, and then handling as normal function call, could be done as preprocessing step
+-- TODO: cannot default to static args if some are not supplied at all in partial application, should handle explicitly?
+-- TODO: use record for env?
+-- TODO: clean up imports, dependencies
+-- TODO: Formalize syntax of subset of Haskell handled
+-- TODO: assume no mutual recursion? is this needed?
+-- TODO: introduce functions for each dynamic if (p. 103), handle static ifs at specialization?
 
 
 -- Notes
@@ -79,12 +104,15 @@ import Data.Functor.Syntax ((<$$>))
 --    wrapping variables in TH brackets if dynamic is only possible if not given as input, and then requires name not being an argument to body generating function
 --    alternatively could not wrap, but would then need exp or name as argument placeholder
 -- wrap in TH in caller or callee?: wrap in TH in callee better for handling ifs with static conditional and dynamic branches
+-- copy original function definition?: yes, could be used as argument, outside application
+-- each function definition can have multiple divisions, each division can have multiple specializations
 
 
 
 
 
 newtype QNameLookup l = QNameLookup (QName l)
+  deriving (Show)
 
 instance Eq (QNameLookup l) where
 --  TODO: how to handle all QName info? different representations could refer to same variable
@@ -99,8 +127,8 @@ data BindingTime = Static | Dynamic
 -- TODO: could just be set of dynamic variables, since static is default?
 -- TODO: instantiate l or drop it? probably won't need SrcSpanInfo, but could be used for Division?
 -- TODO: use QName, Name, or String?, drop l?
-type Division l = [QNameLookup l]
---type Division l = [(QNameLookup l, BindingTime)]
+--type Division l = [QNameLookup l]
+type Division l = [(QNameLookup l, BindingTime)]
 --type Division l = Set (QNameLookup l)
 
 -- TODO: merge Division and functionEnv if we need to look up functions same way as variables?
@@ -113,24 +141,27 @@ type FunctionEnv l = ()
 
 -- TODO: rename? remove l
 --type BTAMonad l = Reader (Division l)
+-- TODO: use record for env?
 -- TODO: function env in state instead? flip reader and writer?
 type BTAMonad l = ReaderT (Division l, FunctionEnv l) (Writer [Decl l])
+-- TODO: use this instead
+--type BTAMonad l = ReaderT (Division l, Module l) (Writer [Decl l])
 --type BTAMonad l = WriterT [Decl l] (Reader (Division l, FunctionEnv l))
 --type BTAMonad l = RWS (Division l) [Decl l] (FunctionEnv l)
 
 -- TODO: should probably avoid SrcSpanInfo here, rename to isDynamic and just return bool?
 bindingTime :: QName SrcSpanInfo -> BTAMonad SrcSpanInfo BindingTime
 bindingTime qName = do
-  isDynamic <- reader $ fst >>> elem (QNameLookup qName)
-  if isDynamic then
-    pure Dynamic
-  else
-    pure Static
---  lookupRes <- reader $ fst >>> lookup (QNameLookup qName)
---  case lookupRes of
---    Just bt -> pure bt
-----    If not found, assume static, since probably a static import
---    Nothing -> pure Static
+--  isDynamic <- reader $ fst >>> elem (QNameLookup qName)
+--  if isDynamic then
+--    pure Dynamic
+--  else
+--    pure Static
+  lookupRes <- reader $ fst >>> lookup (QNameLookup qName)
+  case lookupRes of
+    Just bt -> pure bt
+--    If not found, assume static, since probably a static import
+    Nothing -> pure Static
 
 
 
@@ -139,13 +170,13 @@ bindingTime qName = do
 --analyzeModule :: Module SrcSpanInfo -> BTAMonad SrcSpanInfo (Module SrcSpanInfo)
 ---- TODO: handle other parts of the module
 --analyzeModule (Module info moduleHead pragmas imports [decl]) = Module info moduleHead pragmas imports <$> mapM analyzeDecl [decl]
---analyzeModule _ = notImplementedError
+--analyzeModule _ = undefined
 --
 ---- TODO: don't specialize if all args are static or dynamic, just copy code
 --analyzeDecl :: Decl SrcSpanInfo -> BTAMonad SrcSpanInfo (Decl SrcSpanInfo)
--- TODO: check FunBind vs PatBind
+---- TODO: check FunBind vs PatBind
 --analyzeDecl (FunBind info [match]) = FunBind info <$> mapM analyzeMatch [match]
---analyzeDecl _ = notImplementedError
+--analyzeDecl _ = undefined
 --
 --analyzeMatch :: Match SrcSpanInfo -> BTAMonad SrcSpanInfo (Match SrcSpanInfo)
 ---- TODO: how to handle pats, only do simple cases?
@@ -154,11 +185,11 @@ bindingTime qName = do
 --  analyzedRhs <- analyzeRhs rhs
 --  pure $ Match info name pats analyzedRhs Nothing
 ---- TODO: if Let is implemented, also handle binds here in same way?
---analyzeMatch _ = notImplementedError
+--analyzeMatch _ = undefined
 --
 --analyzeRhs :: Rhs SrcSpanInfo -> BTAMonad SrcSpanInfo (Rhs SrcSpanInfo)
 --analyzeRhs (UnGuardedRhs info exp) = UnGuardedRhs info <$> analyzeExp exp
---analyzeRhs _ = notImplementedError
+--analyzeRhs _ = undefined
 
 -- TODO: this should maybe use or replace above
 --analyzeFunc funcName dynamicArgs =
@@ -183,7 +214,7 @@ analyzeExp (Lit info lit) = pure (Static, Lit info lit)
 analyzeExp (Var info qName) = do
   bt <- bindingTime qName
   case bt of
--- TODO: handle case where this is a (recursive) function call?
+-- TODO: handle case where this is a (recursive) function call? don't put brackets?
     Static -> pure (Static, Var info qName)
     Dynamic -> pure (Dynamic, bracketTH $ Var info qName)
 -- Simple cases
@@ -210,31 +241,112 @@ analyzeExp (If info condExp thenExp elseExp) = do
     -- fully static if
     pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
 
---  TODO: could rewrite like this and use analyzeSimpleExp to handle 2 cases, only do if dynamic cond need not be handled separately
---  if condBT == Static && (thenBT == Dynamic || elseBT == Dynamic)
---  then
---    pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
---  else
-----    if Dynamic `elem` [condBT, thenBT, elseBT]
---    if condBT == Dynamic
---    then
---      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
---    else
---      pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
-
--- TODO:
 -- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
---analyzeExp (App info exp1 exp2) = undefined
+analyzeExp (App info exp1 exp2) =
+  let (funExp, exps) = simplifyApp (App info exp1 exp2) in
+-- TODO: assume funExp is a var? in full Haskell could also be e.g. lambda, section, constructor?, or var defined in let
+-- TODO: decide on unfolding here, or handle in specializer function?
+-- TODO: ensure correct order of static and dynamic args
+-- Notes:
+-- initially no unfolding?
+  case funExp of
+  Var _ qName -> do
+    -- TODO: just use analyzeSimpleExp?
+    analyzeRes <- mapM analyzeExp exps
+    let (bts, analyzedExps) = unzip analyzeRes
+    -- TODO: call BTA recursively
+    btaFunc qName bts
+    let bt = if Dynamic `elem` bts then Dynamic else Static
+    -- TODO: insert call to specializer function in TH instead of just funExp, unless fully static (or fully dynamic?)
+    --  Maybe supply arguments properly by undoing listing? probably needs bts as well
+    pure (bt, App info funExp (List noSrcSpan analyzedExps))
+  _ -> undefined
+-- TODO: reuse code from above for InfixApp
 --analyzeExp (InfixApp info exp1 qOp exp2) = undefined
 --analyzeExp (Let info binds exp) = undefined
 --analyzeExp (Lambda info pats exp) = undefined
-
 -- TODO: case, multiif, paren, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
 -- TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
 -- TODO: Try self application to get missing cases
-analyzeExp _ = notImplementedError
+analyzeExp _ = undefined
 -- TODO: bind static vars in dynamic let binding around this to use as default
 --analyzeExp e = pure (Dynamic, bracketTH e)
+
+
+
+
+-- TODO: take QName or string for function name?
+-- TODO: take QName, String or argument numbers for dynamic args?
+-- TODO: don't specialize if all args are static or dynamic, just copy code
+--TODO: rename to analyzeFunc?
+btaFunc :: QName SrcSpanInfo -> [BindingTime] -> BTAMonad SrcSpanInfo ()
+btaFunc qName bts =
+-- TODO: where to get existing module from, and how to find right function?
+-- Check if already analyzed
+-- Lookup qName in module
+-- Translate bts to mapping of qNames for env
+-- Mark as handled
+-- Analyze RHS
+-- Emit code
+-- TODO: return name of specialized function?
+  undefined
+
+
+
+
+
+type PrepMonad = ReaderT (Name SrcSpanInfo, [BindingTime]) [] (Division SrcSpanInfo, Exp SrcSpanInfo)
+
+
+-- TODO: rename?
+-- TODO: do as preprocessing or on demand?
+-- TODO: get QName and Module from reader instead? create wrapper using monad (reader, writer)? do above?
+prepModule :: Module SrcSpanInfo -> PrepMonad
+-- TODO: handle other parts of the module?
+prepModule (Module info moduleHead pragmas imports decls) = lift decls >>= prepDecl
+prepModule _ = undefined
+
+---- TODO: don't specialize if all args are static or dynamic, just copy code
+prepDecl :: Decl SrcSpanInfo -> PrepMonad
+-- TODO: check FunBind vs PatBind
+-- TODO: only handle single match if too hard?
+prepDecl (FunBind info matches) = lift matches >>= prepMatch
+-- TODO: handle this? could reuse from prepMatch
+--prepDecl (PatBind info pat rhs Nothing) = undefined
+prepDecl _ = undefined
+
+prepMatch :: Match SrcSpanInfo -> PrepMonad
+-- TODO: how to handle pats, only do simple cases?
+-- TODO: if Let is implemented, also handle binds here in same way?
+-- TODO: handle guards? could probably just ignore
+prepMatch (Match info1 name pats (UnGuardedRhs info2 exp) Nothing) = do
+  (qName, bts) <- ask
+  if name =~= qName then
+    let division = liftA2 prepPat bts pats & join in
+    pure (division, exp)
+  else
+    lift []
+prepMatch _ = undefined
+
+
+--prepRhs :: Rhs SrcSpanInfo -> Exp SrcSpanInfo
+--prepRhs (UnGuardedRhs info exp) = exp
+--prepRhs (GuardedRhss info1 guardedRhss) = 
+
+
+prepPat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
+-- TODO: use Name instead of QName in division?
+prepPat bt (PVar info name) = [(QNameLookup (UnQual noSrcSpan name), bt)]
+prepPat bt (PApp info qName pats) = pats >>= prepPat bt
+prepPat bt (PTuple info boxed pats) = pats >>= prepPat bt
+prepPat bt (PList info pats) = pats >>= prepPat bt
+-- TODO: handle more cases
+prepPat _ _ = undefined
+
+
+
+
+
 
 
 
@@ -244,8 +356,7 @@ analyzeSimpleExp :: ([Exp SrcSpanInfo] -> Exp SrcSpanInfo) -> [Exp SrcSpanInfo] 
 analyzeSimpleExp constructor exps = do
   analyzeRes <- mapM analyzeExp exps
   let (bts, analyzedExps) = unzip analyzeRes
-  if Dynamic `elem` bts
-  then
+  if Dynamic `elem` bts then
     pure (Dynamic, bracketTH $ constructor $ fmap (liftIfStatic >>> spliceTH) analyzeRes)
   else
     pure (Static, constructor analyzedExps)
@@ -256,7 +367,11 @@ liftIfStatic (Static, e) = liftTH e
 liftIfStatic (Dynamic, e) = e
 
 
-
+-- TODO: implement inverse of this?
+-- Gather expression being applied along with argument list from nested applications
+simplifyApp :: Exp SrcSpanInfo -> (Exp SrcSpanInfo, [Exp SrcSpanInfo])
+simplifyApp (App _ e1 e2) = (<>[e2]) <$> simplifyApp e1
+simplifyApp e = (e, [])
 
 
 -- TODO: check if actually needed elsewhere, could generalize to list?
