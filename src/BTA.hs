@@ -319,20 +319,14 @@ prepMatch :: Match SrcSpanInfo -> PrepMonad
 -- TODO: how to handle pats, only do simple cases?
 -- TODO: if Let is implemented, also handle binds here in same way?
 -- TODO: handle guards? could probably just ignore
-prepMatch (Match info1 name pats (UnGuardedRhs info2 exp) Nothing) = do
+prepMatch (Match info1 name pats rhs Nothing) = do
   (qName, bts) <- ask
   if name =~= qName then
     let division = liftA2 prepPat bts pats & join in
-    pure (division, exp)
+    prepRhs division rhs
   else
     lift []
 prepMatch _ = undefined
-
-
---prepRhs :: Rhs SrcSpanInfo -> Exp SrcSpanInfo
---prepRhs (UnGuardedRhs info exp) = exp
---prepRhs (GuardedRhss info1 guardedRhss) = 
-
 
 prepPat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 -- TODO: use Name instead of QName in division?
@@ -342,6 +336,13 @@ prepPat bt (PTuple info boxed pats) = pats >>= prepPat bt
 prepPat bt (PList info pats) = pats >>= prepPat bt
 -- TODO: handle more cases
 prepPat _ _ = undefined
+
+prepRhs :: Division SrcSpanInfo -> Rhs SrcSpanInfo -> PrepMonad
+prepRhs division (UnGuardedRhs info exp) = pure (division, exp)
+prepRhs division (GuardedRhss info guardedRhss) = lift guardedRhss >>= prepGuardedRhs division
+
+prepGuardedRhs :: Division SrcSpanInfo -> GuardedRhs SrcSpanInfo -> PrepMonad
+prepGuardedRhs division (GuardedRhs info stmts exp) = pure (division, exp)
 
 
 
