@@ -46,4 +46,5 @@ main = do
 --  print $ showAnalyzeExpResult [hExp| -a |] ["a"]
 --  print $ showAnalyzeExpResult [hExp| [1, 2, a] |] ["a"]
 --  print $ simplifyApp [hExp| f (1 2) 3 |]
-  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
+--  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
+  print [hModule| module Test where f = 1 |]
