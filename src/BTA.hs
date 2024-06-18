@@ -91,6 +91,7 @@ import Data.Bifunctor (bimap)
 -- TODO: Formalize syntax of subset of Haskell handled
 -- TODO: assume no mutual recursion? is this needed?
 -- TODO: introduce functions for each dynamic if (p. 103), handle static ifs at specialization?
+-- TODO: handle other parts of the module, e.g. imports?
 
 
 -- Notes
@@ -283,44 +284,40 @@ type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime
 
 -- TODO: add residual patterns to output?
 -- TODO: separate lookup and analysis?
-analyzeModule :: BTAFuncMonad [Decl SrcSpanInfo]
--- TODO: handle other parts of the module?
+analyzeModule :: BTAFuncMonad (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
 analyzeModule = do
   (m, _) <- ask
   case m of
-    (Module info moduleHead pragmas imports decls) -> catMaybes <$> mapM analyzeDecl decls
+    (Module info moduleHead pragmas imports decls) -> do
+      analyzedDecls <- catMaybes <$> mapM analyzeDecl decls
+      case analyzedDecls of
+        [] -> pure Nothing
+        [(residualPats, decl)] -> pure $ Just (residualPats, decl)
+--        Only one matching decl is assumed to exist
+        _ -> undefined
     _ -> undefined
 
 ---- TODO: don't specialize if all args are static or dynamic, just copy code
-analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad (Maybe (Decl SrcSpanInfo))
--- TODO: check FunBind vs PatBind
--- TODO: only handle single match if too hard?
-analyzeDecl (FunBind info matches) = do
-  analyzedMathces <- mapM analyzeMatch matches
-  let matchingMatches = catMaybes analyzedMathces
-  if null matchingMatches then
-    pure Nothing
-  else
-    pure $ Just $ FunBind info matchingMatches
--- TODO: handle this? could reuse from prepMatch
---prepDecl (PatBind info pat rhs Nothing) = undefined
-analyzeDecl _ = undefined
-
-analyzeMatch :: Match SrcSpanInfo -> BTAFuncMonad (Maybe (Match SrcSpanInfo))
+analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
 -- TODO: if Let is implemented, also handle binds here in same way?
-analyzeMatch (Match info1 name pats rhs Nothing) = do
+analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
   (_, (qName, bts)) <- ask
   if name =~= qName then do
-    let division = liftA2 analyzePat bts pats & join
+   let division = liftA2 analyzePat bts pats & join
 
-    analyzedRhs <- analyzeRhs division rhs
-    let (staticPats, dynamicPats) = bimap (fmap snd) (fmap snd) $ partition (fst >>> (==Static)) $ zip bts pats
-    -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
-    -- TODO: change name, i.e. add suffix to show body generating?
-    pure $ Just $ Match info1 name staticPats analyzedRhs Nothing
+   analyzedRhs <- analyzeRhs division rhs
+   let (staticPats, dynamicPats) = bimap (fmap snd) (fmap snd) $ partition (fst >>> (==Static)) $ zip bts pats
+   -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
+   -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
+   -- TODO: change name, i.e. add suffix to show body generating?
+   let residualPats = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
+   pure $ Just (residualPats, FunBind info1 [Match info2 name staticPats analyzedRhs Nothing])
   else
-    pure Nothing
-analyzeMatch _ = undefined
+   pure Nothing
+-- TODO: handle this? could reuse from prepMatch
+--prepDecl (PatBind info pat rhs Nothing) = undefined
+-- TODO: return Nothing as default instead?
+analyzeDecl _ = undefined
 
 analyzePat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 analyzePat bt (PVar info name) = [(NameLookup name, bt)]

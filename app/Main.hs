@@ -25,7 +25,7 @@ showAnalyzeExpResult exp dynamicNames =
 -- TODO: also take explicitly static names as input
   let dynamicNames' = fmap ((,Dynamic) . NameLookup . H.Ident H.noSrcSpan) dynamicNames in
   analyzeExp exp
-  & flip runReaderT (dynamicNames', H.Module H.noSrcSpan Nothing [] [] [])
+  & flip runReaderT (H.Module H.noSrcSpan Nothing [] [] [], dynamicNames')
   & runWriter
   & fst
   & fmap H.prettyPrint
@@ -47,4 +47,5 @@ main = do
 --  print $ showAnalyzeExpResult [hExp| [1, 2, a] |] ["a"]
 --  print $ simplifyApp [hExp| f (1 2) 3 |]
 --  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
-  print [hModule| module Test where f = 1 |]
+--  print [hModule| module Test where f = 1 |]
+  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
