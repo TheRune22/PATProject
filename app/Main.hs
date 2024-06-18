@@ -47,4 +47,5 @@ main = do
 --  print $ simplifyApp [hExp| f (1 2) 3 |]
 --  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
 --  print [hModule| module Test where f = 1 |]
-  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
+--  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
+  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"

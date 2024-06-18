@@ -5,3 +5,7 @@ pow m n =
     1
   else
     n * pow (m - 1) n
+
+
+main () =
+  pow 3 2

@@ -167,9 +167,9 @@ lookupSignature sig = gets $ lookup sig
 
 addSignature :: BTASignature SrcSpanInfo -> BTAExpMonad SrcSpanInfo (Name SrcSpanInfo)
 addSignature sig = do
-  let newName = getBodyGenName sig
-  modify (<>[(sig, newName)])
-  pure newName
+  let bodyGenName = getBodyGenName sig
+  modify (<>[(sig, bodyGenName)])
+  pure bodyGenName
 
 getBodyGenName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
 -- TODO: ensure unique by using Q monad?
@@ -246,6 +246,8 @@ analyzeExp (App info exp1 exp2) =
               -- TODO:
               undefined
             Nothing -> do
+--              TODO: exploit that this cannot be recursive call since that would fall in above case?
+--              TODO: extract bta and codegen to function to also be used by outer API?
               -- New signature, add to handled and call analysis function recursively
               bodyGenName <- addSignature signature
 --              TODO: postpone recursive call and do in loop instead as seen in article?
@@ -254,10 +256,12 @@ analyzeExp (App info exp1 exp2) =
                 Nothing ->
                   -- Function not found in module, probably an import, so dont specialize
                   dynamicApp funExp analyzeRes
-                Just (dynamicPats, decl) -> do
+                Just (dynamicPats, bodyGenDecl) -> do
                   -- TODO: emit code in analyzeModule instead?
                   -- Add body generating function to decls
-                  tell [decl]
+                  tell [bodyGenDecl]
+                  -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization? could use DeclBracket
+--                  let specializerDecl = FunBind noSrcSpan [Match ]
                   let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
                   -- insert call to TH specializer function
                   specilializerFunc <- getSpecializer
@@ -273,7 +277,7 @@ analyzeExp (App info exp1 exp2) =
 -- TODO: default to simple dynamic call here instead of above?
 -- TODO: assume funExp is a var? in full Haskell could also be e.g. lambda, section, constructor?, or var defined in let
   _ -> undefined
--- TODO: reuse code from above for InfixApp
+-- TODO: reuse code from above for InfixApp or just don't specialize, maybe even assume static?
 --analyzeExp (InfixApp info exp1 qOp exp2) = undefined
 --analyzeExp (Let info binds exp) = undefined
 --analyzeExp (Lambda info pats exp) = undefined
@@ -299,44 +303,60 @@ analyzeSimpleExp constructor exps = do
 
 
 
--- TODO: rename
-bta :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Module SrcSpanInfo
-bta m signature = undefined
--- TODO: get body from (some of) analyzeExp App?
---  do
---  lookupRes <- lookupSignature signature
---  case lookupRes of
---    Just newName ->
---      -- Already analyzed, just insert specializer call
---      -- TODO:
---      undefined
---    Nothing -> do
---      -- New signature, add to handled and call analysis function recursively
---      bodyGenName <- addSignature signature
-----              TODO: postpone recursive call and do in loop instead as seen in article?
---      analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
---      case analyzedFunc of
---        Nothing ->
---          -- Function not found in module, probably an import, so dont specialize
---          dynamicApp funExp analyzeRes
---        Just (dynamicPats, decl) -> do
---          -- TODO: emit code in analyzeModule instead?
---          -- Add body generating function to decls
---          tell [decl]
---          let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
---          -- insert call to TH specializer function
---          specilializerFunc <- getSpecializer
-----                  TODO: this might not be possible due to typing errors, should maybe only use specilializerFunc to get function, then apply to this? or give static args as TH? or create decl using body generating decl to create specialized function
---          let specializerApp = spliceTH $ applyToArgs specilializerFunc [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
---          pure (Dynamic, bracketTH $ applyToArgs specializerApp dynamicArgs)
---            -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
---            -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
---            -- TODO: only unfold recursive calls?
+
+-- TODO: remove?
+-- Temporary entry point
+btaModule :: Module SrcSpanInfo -> Module SrcSpanInfo
+btaModule (Module info moduleHead pragmas imports decls) =
+  let initialExp = App noSrcSpan (unQualVarH $ Ident noSrcSpan "main") (Tuple noSrcSpan Boxed []) in
+  let specializer = unQualVarH $ Ident noSrcSpan "specializer" in
+  let (_, _, newDecls) = runRWS (analyzeExp initialExp) ((Module info moduleHead pragmas imports decls, specializer), []) [] in
+  Module info moduleHead pragmas imports (decls <> newDecls)
+btaModule _ = undefined
+
+btaFile :: FilePath -> IO ()
+btaFile path = do
+  parsed <- parseFile path
+  case parsed of
+--    TODO: write file instead?
+    ParseOk m -> print $ prettyPrint $ btaModule m
+    _ -> print parsed
+
+
+-- TODO: add functions using body gen to create decls above, use this below, need Static pats for this? - probably not
+-- TODO: should have function that when given Static args of "main" function creates necessary decls
+-- TODO: continue here
+---- TODO: rename
+--bta :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Module SrcSpanInfo
+--bta m signature = undefined
+---- TODO: get body from (some of) analyzeExp App?
+---- TODO: also call specializer func? or create "main" some other way and return name of this?
+--
+--
+---- TODO: something like this:
+--analyzeFunc signature = do
+--  bodyGenName <- addSignature signature
+--  --              TODO: postpone recursive call and do in loop instead as seen in article?
+--  analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
+----  TODO: use Maybe monad
+--  case analyzedFunc of
+--    Nothing ->
+--      -- Function not found in module, probably an import, so dont specialize
+--      pure Nothing
+--    Just (dynamicPats, decl) -> do
+--      -- TODO: emit code in analyzeModule instead?
+--      -- Add body generating function to decls
+--      tell [decl]
+----      TODO: also return dynamicPats?
+--      pure $ Just (bodyGenName, dynamicPats)
+---- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
+---- TODO: add more from analyzeExp App?
+
+
 
 --type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime])) (Writer [Decl SrcSpanInfo])
 type BTAFuncMonad l = BTAMonad l (BTASignature SrcSpanInfo, Name SrcSpanInfo)
 
--- TODO: add name of generated decl to input instead?
 -- TODO: separate lookup and analysis?
 analyzeModule :: BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
 analyzeModule = do
@@ -357,7 +377,8 @@ analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpan
 analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
   (_, ((oldName, bts), newName)) <- ask
   if name =~= oldName then do
-    let division = liftA2 analyzePat bts pats & join
+    -- default to dynamic if less bts than pats for partial application
+    let division = zip (bts <> repeat Dynamic) pats >>= uncurry analyzePat
 
     analyzedRhs <- analyzeRhs division rhs
     let (staticPats, dynamicPats) = splitByBTs bts pats
