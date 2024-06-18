@@ -47,6 +47,7 @@ import Data.Bifunctor (bimap)
 -- TODO:    could use Code monadic actions
 -- TODO: avoid quotes in order to avoid Q monad?
 -- TODO: functions for getting suffixed names allowing for ensuring unique in the future
+-- TODO: should probably just copy input module to ensure necessary imports stay, and add to the end of it
 
 
 -- Do later
@@ -133,28 +134,21 @@ data BindingTime = Static | Dynamic
 -- TODO: use QName, Name, or String?, drop l?
 type Division l = [(NameLookup l, BindingTime)]
 
--- TODO: merge Division and functionEnv if we need to look up functions same way as variables?
---type FunctionEnv l = ()
-
-
-
-
+type BTASignature l = (Name l, [BindingTime])
 
 
 -- TODO: rename? remove l
---type BTAMonad l = Reader (Division l)
 -- TODO: use record for env?
--- TODO: function env in state instead? flip reader and writer?
-type BTAExpMonad l = ReaderT (Module l, Division l) (Writer [Decl l])
--- TODO: use this instead
---type BTAMonad l = ReaderT (Division l, Module l) (Writer [Decl l])
---type BTAMonad l = WriterT [Decl l] (Reader (Division l, FunctionEnv l))
---type BTAMonad l = RWS (Division l) [Decl l] (FunctionEnv l)
+type BTAMonad l r = RWS ((Module l, Exp l), r) [Decl l] [(BTASignature l, Name l)]
+
+getModule :: BTAMonad l r (Module l)
+getModule = reader (fst >>> fst)
+
+getSpecializer :: BTAMonad l r (Exp l)
+getSpecializer = reader (fst >>> snd)
 
 
-getModule :: BTAExpMonad l (Module l)
-getModule = reader fst
-
+type BTAExpMonad l =  BTAMonad l (Division l)
 
 -- TODO: should probably avoid SrcSpanInfo here, rename to isDynamic and just return bool?
 bindingTime :: QName SrcSpanInfo -> BTAExpMonad SrcSpanInfo BindingTime
@@ -168,7 +162,19 @@ bindingTime (UnQual info name) = do
 bindingTime _ = pure Static
 
 
+lookupSignature :: BTASignature SrcSpanInfo -> BTAExpMonad SrcSpanInfo (Maybe (Name SrcSpanInfo))
+lookupSignature sig = gets $ lookup sig
 
+addSignature :: BTASignature SrcSpanInfo -> BTAExpMonad SrcSpanInfo (Name SrcSpanInfo)
+addSignature sig = do
+  let newName = getBodyGenName sig
+  modify (<>[(sig, newName)])
+  pure newName
+
+getBodyGenName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
+-- TODO: ensure unique by using Q monad?
+getBodyGenName (Ident info oldName, bts) = Ident info $ oldName <> "_BodyGen_" <> mconcat (fmap show bts)
+getBodyGenName _ = undefined
 
 
 -- TODO: maybe reader should not be used before this point, should be input instead?
@@ -211,49 +217,61 @@ analyzeExp (If info condExp thenExp elseExp) = do
 -- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
 analyzeExp (App info exp1 exp2) =
   let (funExp, exps) = simplifyApp (App info exp1 exp2) in
--- TODO: assume funExp is a var? in full Haskell could also be e.g. lambda, section, constructor?, or var defined in let
--- TODO: decide on unfolding here, or handle in specializer function?
--- TODO: ensure correct order of static and dynamic args
--- Notes:
--- initially no unfolding?
+-- TODO: also analyze funExp?
   case funExp of
--- TODO: handle Qualified names?
-  Var _ (UnQual info1 name) -> do
+  Var _ qName -> do
     -- TODO: just use analyzeSimpleExp?
     analyzeRes <- mapM analyzeExp exps
     let (bts, analyzedExps) = unzip analyzeRes
-    let funBT = bindingTime (UnQual info1 name)
-    undefined
-
---    if funBT == Dynamic || all (==Dynamic) bts then
-
-      -- mixed function call
-
---    let argsBT = if Dynamic `elem` bts then Dynamic else Static
-
-
-
-    -- TODO: call BTA recursively
-    -- TODO: handle function not found
-    -- TODO: also return arg pats here for specializer function
-
+    funBT <- bindingTime qName
+    if funBT == Dynamic || all (==Dynamic) bts then
+--      Don't specialize, just insert dynamic call
+      -- TODO: handle `all (==Dynamic) bts` case as part of spezializing?
+      dynamicApp funExp analyzeRes
+    else if all (==Static) bts then
+--      Fully static function application, do statically
+--      TODO: Copy function here specifically, or always copy all decls?
+      pure (Static, applyToArgs funExp analyzedExps)
+--      TODO: could possibly merge with below by using bt = if Dynamic `elem` bts then Dynamic else Static
+    else
+--      Specialize call by running BTA recursively and inserting call to specialized function
     -- TODO: extract below to new function or just keep here?
-    -- TODO: don't specialize if all args are static or dynamic, just copy code?
-    -- Check if already analyzed
-    -- Lookup qName in module
-    -- TODO: What to return if found, what to return if not
-    -- Translate bts to mapping of qNames for env
-    -- Mark as handled
-    -- Analyze RHS
-    -- Emit code
-    -- TODO: return name of specialized function?
-    -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
-
-
-    -- TODO: if fully static (or fully dynamic?) simply insert call to original function, ensure defined, perhaps by recursive call to BTA
-    -- TODO: otherwise insert call to TH specializer function instead of just funExp
-    --  Maybe supply arguments properly by undoing listing? probably needs bts as well
---    pure (bt, App info funExp (List noSrcSpan analyzedExps))
+      case qName of
+        UnQual info1 name -> do
+          let signature = (name, bts)
+          lookupRes <- lookupSignature signature
+          case lookupRes of
+            Just newName ->
+              -- Already analyzed, just insert specializer call
+              -- TODO:
+              undefined
+            Nothing -> do
+              -- New signature, add to handled and call analysis function recursively
+              bodyGenName <- addSignature signature
+--              TODO: postpone recursive call and do in loop instead as seen in article?
+              analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
+              case analyzedFunc of
+                Nothing ->
+                  -- Function not found in module, probably an import, so dont specialize
+                  dynamicApp funExp analyzeRes
+                Just (dynamicPats, decl) -> do
+                  -- TODO: emit code in analyzeModule instead?
+                  -- Add body generating function to decls
+                  tell [decl]
+                  let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
+                  -- insert call to TH specializer function
+                  specilializerFunc <- getSpecializer
+--                  TODO: this might not be possible due to typing errors, should maybe only use specilializerFunc to get function, then apply to this? or give static args as TH? or create decl using body generating decl to create specialized function
+                  let specializerApp = spliceTH $ applyToArgs specilializerFunc [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
+                  pure (Dynamic, bracketTH $ applyToArgs specializerApp dynamicArgs)
+          -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
+          -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
+          -- TODO: only unfold recursive calls?
+        _ ->
+--        Don't specialize qualified names
+          dynamicApp funExp analyzeRes
+-- TODO: default to simple dynamic call here instead of above?
+-- TODO: assume funExp is a var? in full Haskell could also be e.g. lambda, section, constructor?, or var defined in let
   _ -> undefined
 -- TODO: reuse code from above for InfixApp
 --analyzeExp (InfixApp info exp1 qOp exp2) = undefined
@@ -266,6 +284,10 @@ analyzeExp _ = undefined
 -- TODO: bind static vars in dynamic let binding around this to use as default
 --analyzeExp e = pure (Dynamic, bracketTH e)
 
+
+dynamicApp :: Exp SrcSpanInfo -> [(BindingTime, Exp SrcSpanInfo)] -> BTAExpMonad SrcSpanInfo (BindingTime, Exp SrcSpanInfo)
+dynamicApp funExp analyzeRes = pure (Dynamic, bracketTH $ applyToArgs funExp (fmap (liftIfStatic >>> spliceTH) analyzeRes))
+
 analyzeSimpleExp :: ([Exp SrcSpanInfo] -> Exp SrcSpanInfo) -> [Exp SrcSpanInfo] -> BTAExpMonad SrcSpanInfo (BindingTime, Exp SrcSpanInfo)
 analyzeSimpleExp constructor exps = do
   analyzeRes <- mapM analyzeExp exps
@@ -277,43 +299,75 @@ analyzeSimpleExp constructor exps = do
 
 
 
+-- TODO: rename
+bta :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Module SrcSpanInfo
+bta m signature = undefined
+-- TODO: get body from (some of) analyzeExp App?
+--  do
+--  lookupRes <- lookupSignature signature
+--  case lookupRes of
+--    Just newName ->
+--      -- Already analyzed, just insert specializer call
+--      -- TODO:
+--      undefined
+--    Nothing -> do
+--      -- New signature, add to handled and call analysis function recursively
+--      bodyGenName <- addSignature signature
+----              TODO: postpone recursive call and do in loop instead as seen in article?
+--      analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
+--      case analyzedFunc of
+--        Nothing ->
+--          -- Function not found in module, probably an import, so dont specialize
+--          dynamicApp funExp analyzeRes
+--        Just (dynamicPats, decl) -> do
+--          -- TODO: emit code in analyzeModule instead?
+--          -- Add body generating function to decls
+--          tell [decl]
+--          let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
+--          -- insert call to TH specializer function
+--          specilializerFunc <- getSpecializer
+----                  TODO: this might not be possible due to typing errors, should maybe only use specilializerFunc to get function, then apply to this? or give static args as TH? or create decl using body generating decl to create specialized function
+--          let specializerApp = spliceTH $ applyToArgs specilializerFunc [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
+--          pure (Dynamic, bracketTH $ applyToArgs specializerApp dynamicArgs)
+--            -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
+--            -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
+--            -- TODO: only unfold recursive calls?
 
+--type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime])) (Writer [Decl SrcSpanInfo])
+type BTAFuncMonad l = BTAMonad l (BTASignature SrcSpanInfo, Name SrcSpanInfo)
 
-type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime])) (Writer [Decl SrcSpanInfo])
-
-
--- TODO: add residual patterns to output?
+-- TODO: add name of generated decl to input instead?
 -- TODO: separate lookup and analysis?
-analyzeModule :: BTAFuncMonad (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
+analyzeModule :: BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
 analyzeModule = do
-  (m, _) <- ask
+  m <- getModule
   case m of
     (Module info moduleHead pragmas imports decls) -> do
       analyzedDecls <- catMaybes <$> mapM analyzeDecl decls
       case analyzedDecls of
         [] -> pure Nothing
-        [(residualPats, decl)] -> pure $ Just (residualPats, decl)
+        [x] -> pure $ Just x
 --        Only one matching decl is assumed to exist
         _ -> undefined
     _ -> undefined
 
 ---- TODO: don't specialize if all args are static or dynamic, just copy code
-analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
+analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
 -- TODO: if Let is implemented, also handle binds here in same way?
 analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
-  (_, (qName, bts)) <- ask
-  if name =~= qName then do
-   let division = liftA2 analyzePat bts pats & join
+  (_, ((oldName, bts), newName)) <- ask
+  if name =~= oldName then do
+    let division = liftA2 analyzePat bts pats & join
 
-   analyzedRhs <- analyzeRhs division rhs
-   let (staticPats, dynamicPats) = bimap (fmap snd) (fmap snd) $ partition (fst >>> (==Static)) $ zip bts pats
-   -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
-   -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
-   -- TODO: change name, i.e. add suffix to show body generating?
-   let residualPats = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
-   pure $ Just (residualPats, FunBind info1 [Match info2 name staticPats analyzedRhs Nothing])
+    analyzedRhs <- analyzeRhs division rhs
+    let (staticPats, dynamicPats) = splitByBTs bts pats
+    -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
+    -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
+    -- TODO: change name, i.e. add suffix to show body generating?
+    let residualPats = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
+    pure $ Just (residualPats, FunBind info1 [Match info2 newName staticPats analyzedRhs Nothing])
   else
-   pure Nothing
+    pure Nothing
 -- TODO: handle this? could reuse from prepMatch
 --prepDecl (PatBind info pat rhs Nothing) = undefined
 -- TODO: return Nothing as default instead?
@@ -327,7 +381,7 @@ analyzePat bt (PList info pats) = pats >>= analyzePat bt
 ---- TODO: handle more cases
 analyzePat _ _ = undefined
 
-analyzeRhs :: Division SrcSpanInfo -> Rhs SrcSpanInfo -> BTAFuncMonad (Rhs SrcSpanInfo)
+analyzeRhs :: Division SrcSpanInfo -> Rhs SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Rhs SrcSpanInfo)
 analyzeRhs division (UnGuardedRhs info exp) = UnGuardedRhs info <$> analyzeRhsHelper division exp
 analyzeRhs _ _ = undefined
 --analyzeRhs division (GuardedRhss info guardedRhss) = GuardedRhss info <$> mapM (analyzeGuardedRhs division) guardedRhss
@@ -336,27 +390,33 @@ analyzeRhs _ _ = undefined
 ---- TODO: can just ignore guards? must check for both dynamic and static variables
 --analyzeGuardedRhs division (GuardedRhs info stmts exp) = GuardedRhs info stmts <$> analyzeRhsHelper division exp
 
-analyzeRhsHelper :: Division SrcSpanInfo -> Exp SrcSpanInfo -> BTAFuncMonad (Exp SrcSpanInfo)
+analyzeRhsHelper :: Division SrcSpanInfo -> Exp SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Exp SrcSpanInfo)
 analyzeRhsHelper division exp = do
-  analyzedExp <- withReaderT (fmap (const division)) $ analyzeExp exp
+--  analyzedExp <- withReaderT (fmap (const division)) $ analyzeExp exp
+  analyzedExp <- withRWS (\r s -> (fmap (const division) r, s)) $ analyzeExp exp
 --  TODO: if static, lift? is this right?
   pure $ liftIfStatic analyzedExp
 
 
 
 
-
+-- TODO: move some to Utils?
 -- Helpers
 liftIfStatic :: (BindingTime, Exp SrcSpanInfo) -> Exp SrcSpanInfo
 liftIfStatic (Static, e) = liftTH e
 liftIfStatic (Dynamic, e) = e
 
-
--- TODO: implement inverse of this?
 -- Gather expression being applied along with argument list from nested applications
 simplifyApp :: Exp SrcSpanInfo -> (Exp SrcSpanInfo, [Exp SrcSpanInfo])
 simplifyApp (App _ e1 e2) = (<>[e2]) <$> simplifyApp e1
 simplifyApp e = (e, [])
+
+-- Inverse of above
+applyToArgs :: Exp SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo
+applyToArgs = foldl (App noSrcSpan)
+
+splitByBTs :: [BindingTime] -> [a] -> ([a], [a])
+splitByBTs bts xs = bimap (fmap snd) (fmap snd) $ partition (fst >>> (==Static)) $ zip bts xs
 
 
 -- TODO: check if actually needed elsewhere, could generalize to list?

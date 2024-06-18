@@ -106,3 +106,9 @@ f $|$ e = f (spliceTH e)
 liftTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
 -- TODO: could be qualified? ever need parens here?
 liftTH = H.App H.noSrcSpan (H.Var H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "lift")
+
+listH :: [H.Exp H.SrcSpanInfo] -> H.Exp H.SrcSpanInfo
+listH = H.List H.noSrcSpan
+
+unQualVarH :: H.Name H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+unQualVarH = H.Var H.noSrcSpan . H.UnQual H.noSrcSpan

@@ -18,16 +18,15 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Lazy
 import Control.Arrow ((>>>), first)
 import Data.Function ((&))
+import Control.Monad.RWS.Lazy (runRWS)
 
 
 showAnalyzeExpResult :: H.Exp H.SrcSpanInfo -> [String] -> (BindingTime, String, [String])
 showAnalyzeExpResult exp dynamicNames =
 -- TODO: also take explicitly static names as input
   let dynamicNames' = fmap ((,Dynamic) . NameLookup . H.Ident H.noSrcSpan) dynamicNames in
-  analyzeExp exp
-  & flip runReaderT (H.Module H.noSrcSpan Nothing [] [] [], dynamicNames')
-  & runWriter
-  & fst
+  runRWS (analyzeExp exp) ((H.Module H.noSrcSpan Nothing [] [] [], unQualVarH $ H.Ident H.noSrcSpan "specializer"), dynamicNames') []
+  & \(x, _, _) -> x
   & fmap H.prettyPrint
   & \(a, b) -> (a, b, dynamicNames)
 
