@@ -152,13 +152,13 @@ type BTAExpMonad l = ReaderT (Module l, Division l) (Writer [Decl l])
 
 
 getModule :: BTAExpMonad l (Module l)
-getModule = reader snd
+getModule = reader fst
 
 
 -- TODO: should probably avoid SrcSpanInfo here, rename to isDynamic and just return bool?
 bindingTime :: QName SrcSpanInfo -> BTAExpMonad SrcSpanInfo BindingTime
 bindingTime (UnQual info name) = do
-  lookupRes <- reader $ fst >>> lookup (NameLookup name)
+  lookupRes <- reader $ snd >>> lookup (NameLookup name)
   case lookupRes of
     Just bt -> pure bt
 -- If not found, assume static, since probably a static import
@@ -221,6 +221,17 @@ analyzeExp (App info exp1 exp2) =
     -- TODO: just use analyzeSimpleExp?
     analyzeRes <- mapM analyzeExp exps
     let (bts, analyzedExps) = unzip analyzeRes
+    let funBT = bindingTime (UnQual info1 name)
+    undefined
+
+--    if funBT == Dynamic || all (==Dynamic) bts then
+
+      -- mixed function call
+
+--    let argsBT = if Dynamic `elem` bts then Dynamic else Static
+
+
+
     -- TODO: call BTA recursively
     -- TODO: handle function not found
     -- TODO: also return arg pats here for specializer function
@@ -237,11 +248,11 @@ analyzeExp (App info exp1 exp2) =
     -- TODO: return name of specialized function?
     -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
 
-    let bt = if Dynamic `elem` bts then Dynamic else Static
+
     -- TODO: if fully static (or fully dynamic?) simply insert call to original function, ensure defined, perhaps by recursive call to BTA
     -- TODO: otherwise insert call to TH specializer function instead of just funExp
     --  Maybe supply arguments properly by undoing listing? probably needs bts as well
-    pure (bt, App info funExp (List noSrcSpan analyzedExps))
+--    pure (bt, App info funExp (List noSrcSpan analyzedExps))
   _ -> undefined
 -- TODO: reuse code from above for InfixApp
 --analyzeExp (InfixApp info exp1 qOp exp2) = undefined
