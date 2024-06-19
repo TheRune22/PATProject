@@ -142,23 +142,29 @@ type BTASignature l = (NameLookup l, [BindingTime])
 
 -- TODO: rename? remove l
 -- TODO: use record for env?
-type BTAMonad l r = RWS ((Module l, Exp l, Bool), r) [Decl l] ([(BTASignature l, (String, String))], [(BTASignature l, [Pat l])])
+type BTAMonad l r = RWS ((Module l, Exp l, Bool, NameLookup l), r) [Decl l] ([(BTASignature l, (String, String))], [(BTASignature l, [Pat l])])
 
 getModule :: BTAMonad l r (Module l)
-getModule = reader (fst >>> \(x, _, _) -> x)
+getModule = reader (fst >>> \(x, _, _, _) -> x)
 
 getSpecializer :: BTAMonad l r (Exp l)
-getSpecializer = reader (fst >>> \(_, x, _) -> x)
+getSpecializer = reader (fst >>> \(_, x, _, _) -> x)
 
 getUnfolding :: BTAMonad l r Bool
-getUnfolding = reader (fst >>> \(_, _, x) -> x)
+getUnfolding = reader (fst >>> \(_, _, x, _) -> x)
+
+getAnalyzed :: BTAMonad l r (NameLookup l)
+getAnalyzed = reader (fst >>> \(_, _, _, x) -> x)
 
 withUnfolding :: Bool -> BTAMonad l r a -> BTAMonad l r a
-withUnfolding b = withRWS (\r s -> (first (\(x, y, _) -> (x, y, b)) r, s))
+withUnfolding b = withRWS (\r s -> (first (\(x, y, _, z) -> (x, y, b, z)) r, s))
+
+withAnalyzed :: NameLookup l -> BTAMonad l r a -> BTAMonad l r a
+withAnalyzed n = withRWS (\r s -> (first (\(x, y, z, _) -> (x, y, z, n)) r, s))
 
 
-checkFuncSeen :: BTASignature l -> BTAMonad l r Bool
-checkFuncSeen signature = gets $ fst >>> fmap (first fst) >>> lookup (fst signature) >>> isJust
+--checkFuncSeen :: BTASignature l -> BTAMonad l r Bool
+--checkFuncSeen signature = gets $ fst >>> fmap (first fst) >>> lookup (fst signature) >>> isJust
 
 ---- TODO: remove specializerName?
 --lookupSignature :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
@@ -353,7 +359,8 @@ getMainSpecializer signature = do
 -- TODO: add TemplateHaskell Language Extensions to generated file, import TH, define specializer and monad with instances
 btaModule :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Maybe (Module SrcSpanInfo)
 btaModule (Module info moduleHead pragmas imports decls) signature =
-  case runRWS (getMainSpecializer signature) ((Module info moduleHead pragmas imports decls, unQualVarH "specializer", False), []) ([], []) of
+-- TODO: set initial name
+  case runRWS (getMainSpecializer signature) ((Module info moduleHead pragmas imports decls, unQualVarH "specializer", True, NameLookup $ Ident noSrcSpan "Test"), []) ([], []) of
     (Just mainDecl, _, generatedDecls) ->
       Just $ Module info moduleHead pragmas imports (decls <> generatedDecls <> [mainDecl])
     _ ->
@@ -409,13 +416,12 @@ findOrDefine signature = do
       pure $ Just (names, dynamicPats)
     _ ->
 --    New signature, analyze with unfolding enabled
-      withUnfolding True $ analyzeFunc signature
+      withAnalyzed (fst signature) $ withUnfolding True $ analyzeFunc signature
 
 
 -- TODO: replace lookup with this? merge with above?
 getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
 getSpecializerApp signature staticArgs maybeName = do
-  funcSeen <- checkFuncSeen signature
   lookupRes <- findOrDefine signature
   case lookupRes of
     Just ((bodyGenName, specializerName), dynamicPats) -> do
@@ -426,7 +432,12 @@ getSpecializerApp signature staticArgs maybeName = do
       let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
       let staticArgsTH = fmap liftTH staticArgs
       unfoldingEnabled <- getUnfolding
-      pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName, boolH (unfoldingEnabled && funcSeen)]
+      analyzedName <- getAnalyzed
+      let recursiveCall = analyzedName == fst signature
+      if unfoldingEnabled && recursiveCall then
+        pure $ Just $ applyToArgs (unQualVarH bodyGenName) staticArgs
+      else
+        pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName, boolH False]
   -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
   -- TODO: only unfold recursive calls?
     Nothing -> do
