@@ -9,6 +9,7 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Syntax
 import Control.Arrow ((>>>))
 import Data.Data (Data)
+import Debug.Trace (trace)
 
 
 -- QuasiQuoters for parsing Haskell code to AST
@@ -112,3 +113,7 @@ listH = H.List H.noSrcSpan
 
 unQualVarH :: H.Name H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
 unQualVarH = H.Var H.noSrcSpan . H.UnQual H.noSrcSpan
+
+debug :: (Monad m, Show a) => a -> m ()
+debug x = do
+  trace (show x) $ pure ()

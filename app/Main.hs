@@ -32,6 +32,15 @@ showAnalyzeExpResult exp dynamicNames =
   & \(a, b) -> (a, b, dynamicNames)
 
 
+
+parseTest :: FilePath -> IO ()
+parseTest f = do
+  parseRes <- H.parseFile f
+  case parseRes of
+    H.ParseOk a -> print a
+    _ -> pure ()
+
+
 main :: IO ()
 main = do
 --  print [hExp| 1 `a` 2 |]
@@ -49,7 +58,6 @@ main = do
 --  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
 --  print [hModule| module Test where f = 1 |]
 --  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
---  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
---  print $ $([| mconcat $ repeat $ Sum 1 |]) <> $([| Sum 1 |])
-  print 0
+  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" (NameLookup $ H.Ident H.noSrcSpan "pow", [Static, Dynamic])
+--  parseTest "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" 
  
