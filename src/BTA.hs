@@ -391,7 +391,7 @@ findOrDefine signature = do
 
 
 -- TODO: replace lookup with this? merge with above?
-getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
+getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo]-> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
 getSpecializerApp signature staticArgs = do
   lookupRes <- findOrDefine signature
   case lookupRes of
@@ -401,7 +401,8 @@ getSpecializerApp signature staticArgs = do
       -- TODO: this is ideal but requires separate specializer for each signature
       -- pure $ Just $ applyToArgs (unQualVarH specializerName) [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
       let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
-      pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps]
+      let staticArgsTH = fmap liftTH staticArgs
+      pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH]
   -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
   -- TODO: only unfold recursive calls?
     Nothing -> do

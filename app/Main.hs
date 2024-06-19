@@ -58,6 +58,6 @@ main = do
 --  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
 --  print [hModule| module Test where f = 1 |]
 --  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
-  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" (NameLookup $ H.Ident H.noSrcSpan "pow", [Static, Dynamic])
---  parseTest "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" 
- 
+--  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" (NameLookup $ H.Ident H.noSrcSpan "pow", [Static, Dynamic])
+--  parseTest "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
+--  print [hExp| Nothing |]
