@@ -19,7 +19,7 @@ import Control.Monad.Identity (Identity)
 import Data.Maybe (catMaybes)
 import Data.List (partition)
 import Control.Lens (both)
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (bimap, first, second)
 --import Data.List.NonEmpty
 
 
@@ -139,13 +139,47 @@ type BTASignature l = (Name l, [BindingTime])
 
 -- TODO: rename? remove l
 -- TODO: use record for env?
-type BTAMonad l r = RWS ((Module l, Exp l), r) [Decl l] [(BTASignature l, Name l)]
+type BTAMonad l r = RWS ((Module l, Exp l), r) [Decl l] ([(BTASignature l, (Name l, Name l))], [(BTASignature l, [Pat l])])
 
 getModule :: BTAMonad l r (Module l)
 getModule = reader (fst >>> fst)
 
 getSpecializer :: BTAMonad l r (Exp l)
 getSpecializer = reader (fst >>> snd)
+
+
+---- TODO: remove specializerName?
+--lookupSignature :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
+--lookupSignature sig = do
+--  (namesRes, dynamicPatsRes) <- gets $ bimap (lookup sig) (lookup sig)
+--  case (namesRes, dynamicPatsRes) of
+--    (Just names, Just dynamicPats) ->
+--      pure $ Just (names, dynamicPats)
+--    _ -> pure Nothing
+
+
+addNames :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Name SrcSpanInfo, Name SrcSpanInfo)
+addNames sig = do
+  let bodyGenName = getBodyGenName sig
+  let specializerName = getSpecializerName sig
+  modify $ first (<>[(sig, (bodyGenName, specializerName))])
+  pure (bodyGenName, specializerName)
+
+
+addDynamicPats :: BTASignature SrcSpanInfo -> [Pat SrcSpanInfo] -> BTAMonad SrcSpanInfo r ()
+addDynamicPats sig dynamicPats = do
+  modify $ second (<>[(sig, dynamicPats)])
+  pure mempty
+
+getBodyGenName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
+-- TODO: ensure unique by using Q monad?
+getBodyGenName (Ident info oldName, bts) = Ident info $ oldName <> "_BodyGen_" <> mconcat (fmap show bts)
+getBodyGenName _ = undefined
+
+getSpecializerName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
+-- TODO: ensure unique by using Q monad?
+getSpecializerName (Ident info oldName, bts) = Ident info $ oldName <> "_Specializer_" <> mconcat (fmap show bts)
+getSpecializerName _ = undefined
 
 
 type BTAExpMonad l =  BTAMonad l (Division l)
@@ -161,20 +195,6 @@ bindingTime (UnQual info name) = do
 -- TODO: handle differently?
 bindingTime _ = pure Static
 
-
-lookupSignature :: BTASignature SrcSpanInfo -> BTAExpMonad SrcSpanInfo (Maybe (Name SrcSpanInfo))
-lookupSignature sig = gets $ lookup sig
-
-addSignature :: BTASignature SrcSpanInfo -> BTAExpMonad SrcSpanInfo (Name SrcSpanInfo)
-addSignature sig = do
-  let bodyGenName = getBodyGenName sig
-  modify (<>[(sig, bodyGenName)])
-  pure bodyGenName
-
-getBodyGenName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
--- TODO: ensure unique by using Q monad?
-getBodyGenName (Ident info oldName, bts) = Ident info $ oldName <> "_BodyGen_" <> mconcat (fmap show bts)
-getBodyGenName _ = undefined
 
 
 -- TODO: maybe reader should not be used before this point, should be input instead?
@@ -239,38 +259,15 @@ analyzeExp (App info exp1 exp2) =
       case qName of
         UnQual info1 name -> do
           let signature = (name, bts)
-          lookupRes <- lookupSignature signature
+          let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
+          -- TODO: exploit that this cannot be recursive call when not already analyzed?
+          lookupRes <- getSpecializerApp signature staticArgs
           case lookupRes of
-            Just newName ->
-              -- Already analyzed, just insert specializer call
-              -- TODO:
-              undefined
-            Nothing -> do
---              TODO: exploit that this cannot be recursive call since that would fall in above case?
---              TODO: extract bta and codegen to function to also be used by outer API?
-              -- New signature, add to handled and call analysis function recursively
-              bodyGenName <- addSignature signature
---              TODO: postpone recursive call and do in loop instead as seen in article?
-              analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
-              case analyzedFunc of
-                Nothing ->
-                  -- Function not found in module, probably an import, so dont specialize
-                  dynamicApp funExp analyzeRes
-                Just (dynamicPats, bodyGenDecl) -> do
-                  -- TODO: emit code in analyzeModule instead?
-                  -- Add body generating function to decls
-                  tell [bodyGenDecl]
-                  -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization? could use DeclBracket
---                  let specializerDecl = FunBind noSrcSpan [Match ]
-                  let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
-                  -- insert call to TH specializer function
-                  specilializerFunc <- getSpecializer
---                  TODO: this might not be possible due to typing errors, should maybe only use specilializerFunc to get function, then apply to this? or give static args as TH? or create decl using body generating decl to create specialized function
-                  let specializerApp = spliceTH $ applyToArgs specilializerFunc [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
-                  pure (Dynamic, bracketTH $ applyToArgs specializerApp dynamicArgs)
-          -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
-          -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
-          -- TODO: only unfold recursive calls?
+            Just specializerApp ->
+              pure (Dynamic, bracketTH $ applyToArgs (spliceTH specializerApp) dynamicArgs)
+            Nothing ->
+              -- Function not found in module, probably an import, so dont specialize
+              dynamicApp funExp analyzeRes
         _ ->
 --        Don't specialize qualified names
           dynamicApp funExp analyzeRes
@@ -304,61 +301,98 @@ analyzeSimpleExp constructor exps = do
 
 
 
--- TODO: remove?
--- Temporary entry point
-btaModule :: Module SrcSpanInfo -> Module SrcSpanInfo
-btaModule (Module info moduleHead pragmas imports decls) =
-  let initialExp = App noSrcSpan (unQualVarH $ Ident noSrcSpan "main") (Tuple noSrcSpan Boxed []) in
-  let specializer = unQualVarH $ Ident noSrcSpan "specializer" in
-  let (_, _, newDecls) = runRWS (analyzeExp initialExp) ((Module info moduleHead pragmas imports decls, specializer), []) [] in
-  Module info moduleHead pragmas imports (decls <> newDecls)
-btaModule _ = undefined
+---- TODO: remove?
+---- Temporary entry point
+--btaModule :: Module SrcSpanInfo -> Module SrcSpanInfo
+--btaModule (Module info moduleHead pragmas imports decls) =
+--  let initialExp = App noSrcSpan (unQualVarH $ Ident noSrcSpan "main") (Tuple noSrcSpan Boxed []) in
+--  let specializer = unQualVarH $ Ident noSrcSpan "specializer" in
+--  let (_, _, newDecls) = runRWS (analyzeExp initialExp) ((Module info moduleHead pragmas imports decls, specializer), []) [] in
+--  Module info moduleHead pragmas imports (decls <> newDecls)
+--btaModule _ = undefined
+--
+--btaFile :: FilePath -> IO ()
+--btaFile path = do
+--  parsed <- parseFile path
+--  case parsed of
+----    TODO: write file instead?
+--    ParseOk m -> print $ prettyPrint $ btaModule m
+--    _ -> print parsed
 
-btaFile :: FilePath -> IO ()
-btaFile path = do
-  parsed <- parseFile path
-  case parsed of
---    TODO: write file instead?
-    ParseOk m -> print $ prettyPrint $ btaModule m
-    _ -> print parsed
 
-
+-- TODO: One specializer func or shared? initially shared
+-- TODO: are specializer functions needed for every function or just outer function?
 -- TODO: add functions using body gen to create decls above, use this below, need Static pats for this? - probably not
 -- TODO: should have function that when given Static args of "main" function creates necessary decls
 -- TODO: continue here
----- TODO: rename
+-- TODO: rename
+
+-- should Call analyzeFunc
+-- SpecializerFunc should be called, but return can be ignored (or printed)
+
 --bta :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Module SrcSpanInfo
 --bta m signature = undefined
----- TODO: get body from (some of) analyzeExp App?
----- TODO: also call specializer func? or create "main" some other way and return name of this?
---
---
----- TODO: something like this:
---analyzeFunc signature = do
---  bodyGenName <- addSignature signature
---  --              TODO: postpone recursive call and do in loop instead as seen in article?
---  analyzedFunc <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
-----  TODO: use Maybe monad
---  case analyzedFunc of
---    Nothing ->
---      -- Function not found in module, probably an import, so dont specialize
---      pure Nothing
---    Just (dynamicPats, decl) -> do
---      -- TODO: emit code in analyzeModule instead?
---      -- Add body generating function to decls
---      tell [decl]
-----      TODO: also return dynamicPats?
---      pure $ Just (bodyGenName, dynamicPats)
----- TODO: also create decl using body generating decl to create specialized function, or wait until specialization?
----- TODO: add more from analyzeExp App?
 
+
+
+analyzeFunc :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
+analyzeFunc signature = do
+  -- Add to handled
+  (bodyGenName, specializerName) <- addNames signature
+  -- TODO: postpone recursive call and do in loop instead as seen in article?
+  analyzedModule <- withRWS (\r s -> (fmap (const (signature, bodyGenName)) r, s)) analyzeModule
+  case analyzedModule of
+    Nothing ->
+      -- Function not found in module
+      pure Nothing
+    Just (dynamicPats, bodyGenDecl) -> do
+      -- TODO: emit code in analyzeModule instead?
+      -- Add body generating function to decls
+      tell [bodyGenDecl]
+      -- TODO: also create decl using body generating decl to create specialized function, or wait until specialization? could use DeclBracket
+      -- let specializerDecl = FunBind noSrcSpan [Match noSrcSpan specializerName ]
+
+      -- Add dynamic pats to state
+      addDynamicPats signature dynamicPats
+      pure $ Just ((bodyGenName, specializerName), dynamicPats)
+
+
+---- TODO: remove specializerName?
+findOrDefine :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
+findOrDefine sig = do
+  (namesRes, dynamicPatsRes) <- gets $ bimap (lookup sig) (lookup sig)
+  case (namesRes, dynamicPatsRes) of
+    (Just names, Just dynamicPats) ->
+--    Already analyzed, return result
+      pure $ Just (names, dynamicPats)
+    _ ->
+      analyzeFunc sig
+
+
+-- TODO: replace lookup with this? merge with above?
+getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
+getSpecializerApp signature staticArgs = do
+  lookupRes <- findOrDefine signature
+  case lookupRes of
+    Just ((bodyGenName, specializerName), dynamicPats) -> do
+      -- insert call to TH specializer function
+      specilializerFunc <- getSpecializer
+      -- TODO: this is ideal but requires separate specializer for each signature
+      -- pure $ Just $ applyToArgs (unQualVarH specializerName) [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
+      let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
+      pure $ Just $ applyToArgs specilializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps]
+  -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
+  -- TODO: only unfold recursive calls?
+    Nothing -> do
+        -- Function not found in module
+        pure Nothing
 
 
 --type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime])) (Writer [Decl SrcSpanInfo])
 type BTAFuncMonad l = BTAMonad l (BTASignature SrcSpanInfo, Name SrcSpanInfo)
 
 -- TODO: separate lookup and analysis?
-analyzeModule :: BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
+analyzeModule :: BTAFuncMonad SrcSpanInfo (Maybe ([Pat SrcSpanInfo], Decl SrcSpanInfo))
 analyzeModule = do
   m <- getModule
   case m of
@@ -372,7 +406,7 @@ analyzeModule = do
     _ -> undefined
 
 ---- TODO: don't specialize if all args are static or dynamic, just copy code
-analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Maybe ([Exp SrcSpanInfo], Decl SrcSpanInfo))
+analyzeDecl :: Decl SrcSpanInfo -> BTAFuncMonad SrcSpanInfo (Maybe ([Pat SrcSpanInfo], Decl SrcSpanInfo))
 -- TODO: if Let is implemented, also handle binds here in same way?
 analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
   (_, ((oldName, bts), newName)) <- ask
@@ -385,8 +419,8 @@ analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
     -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
     -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
     -- TODO: change name, i.e. add suffix to show body generating?
-    let residualPats = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
-    pure $ Just (residualPats, FunBind info1 [Match info2 newName staticPats analyzedRhs Nothing])
+--    TODO: fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats here or later?
+    pure $ Just (dynamicPats, FunBind info1 [Match info2 newName staticPats analyzedRhs Nothing])
   else
     pure Nothing
 -- TODO: handle this? could reuse from prepMatch

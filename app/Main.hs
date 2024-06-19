@@ -19,13 +19,14 @@ import Control.Monad.Writer.Lazy
 import Control.Arrow ((>>>), first)
 import Data.Function ((&))
 import Control.Monad.RWS.Lazy (runRWS)
+import Data.Monoid (Sum(Sum))
 
 
 showAnalyzeExpResult :: H.Exp H.SrcSpanInfo -> [String] -> (BindingTime, String, [String])
 showAnalyzeExpResult exp dynamicNames =
 -- TODO: also take explicitly static names as input
   let dynamicNames' = fmap ((,Dynamic) . NameLookup . H.Ident H.noSrcSpan) dynamicNames in
-  runRWS (analyzeExp exp) ((H.Module H.noSrcSpan Nothing [] [] [], unQualVarH $ H.Ident H.noSrcSpan "specializer"), dynamicNames') []
+  runRWS (analyzeExp exp) ((H.Module H.noSrcSpan Nothing [] [] [], unQualVarH $ H.Ident H.noSrcSpan "specializer"), dynamicNames') ([], [])
   & \(x, _, _) -> x
   & fmap H.prettyPrint
   & \(a, b) -> (a, b, dynamicNames)
@@ -48,4 +49,7 @@ main = do
 --  print $ prepModule [hModule| module Test where f x = x |] & flip runReaderT (H.Ident H.noSrcSpan "f", [])
 --  print [hModule| module Test where f = 1 |]
 --  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
-  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
+--  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
+--  print $ $([| mconcat $ repeat $ Sum 1 |]) <> $([| Sum 1 |])
+  print 0
+ 
