@@ -22,23 +22,23 @@ import Control.Monad.RWS.Lazy (runRWS)
 import Data.Monoid (Sum(Sum))
 
 
-showAnalyzeExpResult :: H.Exp H.SrcSpanInfo -> [String] -> (BindingTime, String, [String])
-showAnalyzeExpResult exp dynamicNames =
--- TODO: also take explicitly static names as input
-  let dynamicNames' = fmap ((,Dynamic) . NameLookup . H.Ident H.noSrcSpan) dynamicNames in
-  runRWS (analyzeExp exp) ((H.Module H.noSrcSpan Nothing [] [] [], unQualVarH $ H.Ident H.noSrcSpan "specializer"), dynamicNames') ([], [])
-  & \(x, _, _) -> x
-  & fmap H.prettyPrint
-  & \(a, b) -> (a, b, dynamicNames)
-
-
-
-parseTest :: FilePath -> IO ()
-parseTest f = do
-  parseRes <- H.parseFile f
-  case parseRes of
-    H.ParseOk a -> print a
-    _ -> pure ()
+--showAnalyzeExpResult :: H.Exp H.SrcSpanInfo -> [String] -> (BindingTime, String, [String])
+--showAnalyzeExpResult exp dynamicNames =
+---- TODO: also take explicitly static names as input
+--  let dynamicNames' = fmap ((,Dynamic) . NameLookup . H.Ident H.noSrcSpan) dynamicNames in
+--  runRWS (analyzeExp exp) ((H.Module H.noSrcSpan Nothing [] [] [], unQualVarH "specializer"), dynamicNames') ([], [])
+--  & \(x, _, _) -> x
+--  & fmap H.prettyPrint
+--  & \(a, b) -> (a, b, dynamicNames)
+--
+--
+--
+--parseTest :: FilePath -> IO ()
+--parseTest f = do
+--  parseRes <- H.parseFile f
+--  case parseRes of
+--    H.ParseOk a -> print a
+--    _ -> pure ()
 
 
 main :: IO ()
@@ -59,5 +59,7 @@ main = do
 --  print [hModule| module Test where f = 1 |]
 --  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
 --  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" (NameLookup $ H.Ident H.noSrcSpan "pow", [Static, Dynamic])
+  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Foo.hs" (NameLookup $ H.Ident H.noSrcSpan "foo", [Static, Dynamic, Dynamic])
 --  parseTest "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
 --  print [hExp| Nothing |]
+--  print 1

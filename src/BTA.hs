@@ -1,3 +1,6 @@
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE TupleSections #-}
+
 module BTA where
 
 import Utils
@@ -16,7 +19,7 @@ import Control.Arrow ((>>>))
 import Data.Function ((&))
 import Data.Functor.Syntax ((<$$>))
 import Control.Monad.Identity (Identity)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.List (partition)
 import Control.Lens (both)
 import Data.Bifunctor (bimap, first, second)
@@ -139,14 +142,23 @@ type BTASignature l = (NameLookup l, [BindingTime])
 
 -- TODO: rename? remove l
 -- TODO: use record for env?
-type BTAMonad l r = RWS ((Module l, Exp l), r) [Decl l] ([(BTASignature l, (Name l, Name l))], [(BTASignature l, [Pat l])])
+type BTAMonad l r = RWS ((Module l, Exp l, Bool), r) [Decl l] ([(BTASignature l, (String, String))], [(BTASignature l, [Pat l])])
 
 getModule :: BTAMonad l r (Module l)
-getModule = reader (fst >>> fst)
+getModule = reader (fst >>> \(x, _, _) -> x)
 
 getSpecializer :: BTAMonad l r (Exp l)
-getSpecializer = reader (fst >>> snd)
+getSpecializer = reader (fst >>> \(_, x, _) -> x)
 
+getUnfolding :: BTAMonad l r Bool
+getUnfolding = reader (fst >>> \(_, _, x) -> x)
+
+withUnfolding :: Bool -> BTAMonad l r a -> BTAMonad l r a
+withUnfolding b = withRWS (\r s -> (first (\(x, y, _) -> (x, y, b)) r, s))
+
+
+checkFuncSeen :: BTASignature l -> BTAMonad l r Bool
+checkFuncSeen signature = gets $ fst >>> fmap (first fst) >>> lookup (fst signature) >>> isJust
 
 ---- TODO: remove specializerName?
 --lookupSignature :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
@@ -158,7 +170,7 @@ getSpecializer = reader (fst >>> snd)
 --    _ -> pure Nothing
 
 
-addNames :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Name SrcSpanInfo, Name SrcSpanInfo)
+addNames :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (String, String)
 addNames sig = do
   let bodyGenName = getBodyGenName sig
   let specializerName = getSpecializerName sig
@@ -171,14 +183,14 @@ addDynamicPats sig dynamicPats = do
   modify $ second (<>[(sig, dynamicPats)])
   pure mempty
 
-getBodyGenName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
+getBodyGenName :: BTASignature SrcSpanInfo -> String
 -- TODO: ensure unique by using Q monad?
-getBodyGenName (NameLookup (Ident info oldName), bts) = Ident info $ oldName <> "_BodyGen_" <> mconcat (fmap show bts)
+getBodyGenName (NameLookup (Ident info oldName), bts) = oldName <> "_BodyGen_" <> mconcat (fmap show bts)
 getBodyGenName _ = undefined
 
-getSpecializerName :: BTASignature SrcSpanInfo -> Name SrcSpanInfo
+getSpecializerName :: BTASignature SrcSpanInfo -> String
 -- TODO: ensure unique by using Q monad?
-getSpecializerName (NameLookup (Ident info oldName), bts) = Ident info $ oldName <> "_Specializer_" <> mconcat (fmap show bts)
+getSpecializerName (NameLookup (Ident info oldName), bts) = oldName <> "_Specializer_" <> mconcat (fmap show bts)
 getSpecializerName _ = undefined
 
 
@@ -217,22 +229,30 @@ analyzeExp (Tuple info boxed exps) = analyzeSimpleExp (Tuple info boxed) exps
 -- Control flow
 analyzeExp (If info condExp thenExp elseExp) = do
   (condBT, condExpAnalyzed) <- analyzeExp condExp
-  (thenBT, thenExpAnalyzed) <- analyzeExp thenExp
-  (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
-  let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed)
-  let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed)
 
   if condBT == Dynamic then
     -- condition is dynamic, must be evaluated at runtime
     -- TODO: prevent unfolding in this case? must do before analyzing branches, could use reader
---    pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
-    pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
-  else if thenBT == Dynamic || elseBT == Dynamic then
-    -- condition is static, can be evaluated at compile time, but branches are dynamic
-    pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
-  else
-    -- fully static if
-    pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
+    withUnfolding False (do
+      (thenBT, thenExpAnalyzed) <- analyzeExp thenExp
+      (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
+      let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed)
+      let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed)
+
+  --    pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
+      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
+      )
+  else do
+    (thenBT, thenExpAnalyzed) <- analyzeExp thenExp
+    (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
+    let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed)
+    let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed)
+    if thenBT == Dynamic || elseBT == Dynamic then
+      -- condition is static, can be evaluated at compile time, but branches are dynamic
+      pure (Dynamic, If info condExpAnalyzed thenExpMaybeLifted elseExpMaybeLifted)
+    else
+      -- fully static if
+      pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
 
 -- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
 analyzeExp (App info exp1 exp2) =
@@ -261,7 +281,7 @@ analyzeExp (App info exp1 exp2) =
           let signature = (NameLookup name, bts)
           let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
           -- TODO: exploit that this cannot be recursive call when not already analyzed?
-          lookupRes <- getSpecializerApp signature staticArgs
+          lookupRes <- getSpecializerApp signature staticArgs nothingH
           case lookupRes of
             Just specializerApp ->
               pure (Dynamic, bracketTH $ applyToArgs (spliceTH specializerApp) (fmap spliceTH dynamicArgs))
@@ -313,26 +333,27 @@ analyzeSimpleExp constructor exps = do
 getMainSpecializer :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Decl SrcSpanInfo))
 getMainSpecializer signature = do
   let numStaticArgs = filter (==Static) (snd signature) & length
+  let specializedNameVarName = Ident noSrcSpan "name"
   let staticArgNames = [1..numStaticArgs] & fmap (Ident noSrcSpan . ("arg" <>) . show)
   let staticArgPats = fmap (PVar noSrcSpan) staticArgNames
   let staticArgExps = fmap (Var noSrcSpan . UnQual noSrcSpan) staticArgNames
-  lookupRes <- getSpecializerApp signature staticArgExps
+  lookupRes <- getSpecializerApp signature staticArgExps $ justH $ Var noSrcSpan $ UnQual noSrcSpan specializedNameVarName
   case lookupRes of
     Nothing ->
       pure Nothing
     Just specializerApp ->
     -- TODO: get name from monad or elsewhere?
     -- TODO: add initial reader and state?
-      let monadEval = applyToArgs (unQualVarH $ Ident noSrcSpan "evalRWST") [specializerApp, Tuple noSrcSpan Boxed [], Tuple noSrcSpan Boxed []] in
-      let body = applyToArgs (unQualVarH $ Ident noSrcSpan "fmap") [unQualVarH $ Ident noSrcSpan "snd", monadEval] in
+      let monadEval = applyToArgs (unQualVarH "evalRWST") [specializerApp, Tuple noSrcSpan Boxed [], List noSrcSpan []] in
+      let body = applyToArgs (unQualVarH "fmap") [unQualVarH "snd", monadEval] in
       let mainSpecializerName = Ident noSrcSpan "mainSpecializer" in
-      pure $ Just $ FunBind noSrcSpan [Match noSrcSpan mainSpecializerName staticArgPats (UnGuardedRhs noSrcSpan body) Nothing]
+      pure $ Just $ FunBind noSrcSpan [Match noSrcSpan mainSpecializerName ([PVar noSrcSpan specializedNameVarName] <> staticArgPats) (UnGuardedRhs noSrcSpan body) Nothing]
 
 
 -- TODO: add TemplateHaskell Language Extensions to generated file, import TH, define specializer and monad with instances
 btaModule :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Maybe (Module SrcSpanInfo)
 btaModule (Module info moduleHead pragmas imports decls) signature =
-  case runRWS (getMainSpecializer signature) ((Module info moduleHead pragmas imports decls, unQualVarH $ Ident noSrcSpan "specializer"), []) ([], []) of
+  case runRWS (getMainSpecializer signature) ((Module info moduleHead pragmas imports decls, unQualVarH "specializer", False), []) ([], []) of
     (Just mainDecl, _, generatedDecls) ->
       Just $ Module info moduleHead pragmas imports (decls <> generatedDecls <> [mainDecl])
     _ ->
@@ -359,7 +380,7 @@ btaFile path signature = do
 
 
 
-analyzeFunc :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
+analyzeFunc :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((String, String), [Pat SrcSpanInfo]))
 analyzeFunc signature = do
   -- Add to handled
   (bodyGenName, specializerName) <- addNames signature
@@ -379,7 +400,7 @@ analyzeFunc signature = do
 
 
 ---- TODO: remove specializerName?
-findOrDefine :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((Name SrcSpanInfo, Name SrcSpanInfo), [Pat SrcSpanInfo]))
+findOrDefine :: BTASignature SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe ((String, String), [Pat SrcSpanInfo]))
 findOrDefine signature = do
   (namesRes, dynamicPatsRes) <- gets $ bimap (lookup signature) (lookup signature)
   case (namesRes, dynamicPatsRes) of
@@ -387,12 +408,14 @@ findOrDefine signature = do
 --    Already analyzed, return result
       pure $ Just (names, dynamicPats)
     _ ->
-      analyzeFunc signature
+--    New signature, analyze with unfolding enabled
+      withUnfolding True $ analyzeFunc signature
 
 
 -- TODO: replace lookup with this? merge with above?
-getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo]-> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
-getSpecializerApp signature staticArgs = do
+getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
+getSpecializerApp signature staticArgs maybeName = do
+  funcSeen <- checkFuncSeen signature
   lookupRes <- findOrDefine signature
   case lookupRes of
     Just ((bodyGenName, specializerName), dynamicPats) -> do
@@ -402,7 +425,8 @@ getSpecializerApp signature staticArgs = do
       -- pure $ Just $ applyToArgs (unQualVarH specializerName) [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
       let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
       let staticArgsTH = fmap liftTH staticArgs
-      pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH]
+      unfoldingEnabled <- getUnfolding
+      pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName, boolH (unfoldingEnabled && funcSeen)]
   -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
   -- TODO: only unfold recursive calls?
     Nothing -> do
@@ -415,7 +439,7 @@ getSpecializerApp signature staticArgs = do
 
 
 --type BTAFuncMonad = ReaderT (Module SrcSpanInfo, (Name SrcSpanInfo, [BindingTime])) (Writer [Decl SrcSpanInfo])
-type BTAFuncMonad l = BTAMonad l (BTASignature SrcSpanInfo, Name SrcSpanInfo)
+type BTAFuncMonad l = BTAMonad l (BTASignature SrcSpanInfo, String)
 
 -- TODO: separate lookup and analysis?
 analyzeModule :: BTAFuncMonad SrcSpanInfo (Maybe ([Pat SrcSpanInfo], Decl SrcSpanInfo))
@@ -450,7 +474,7 @@ analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
     -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
     -- TODO: change name, i.e. add suffix to show body generating?
 --    TODO: fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats here or later?
-    pure $ Just (dynamicPats, FunBind info1 [Match info2 newName staticPats analyzedRhs Nothing])
+    pure $ Just (dynamicPats, FunBind info1 [Match info2 (Ident noSrcSpan newName) staticPats analyzedRhs Nothing])
   else
     pure Nothing
 -- TODO: handle this? could reuse from prepMatch

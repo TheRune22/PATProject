@@ -111,8 +111,21 @@ liftTH = H.App H.noSrcSpan (H.Var H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H
 listH :: [H.Exp H.SrcSpanInfo] -> H.Exp H.SrcSpanInfo
 listH = H.List H.noSrcSpan
 
-unQualVarH :: H.Name H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
-unQualVarH = H.Var H.noSrcSpan . H.UnQual H.noSrcSpan
+stringH :: String -> H.Exp H.SrcSpanInfo
+stringH s = H.Lit H.noSrcSpan $ H.String H.noSrcSpan s s
+
+nothingH :: H.Exp H.SrcSpanInfo
+nothingH = H.Con H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "Nothing"
+
+justH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+justH = H.App H.noSrcSpan (H.Con H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "Just")
+
+unQualVarH :: String -> H.Exp H.SrcSpanInfo
+unQualVarH = H.Var H.noSrcSpan . H.UnQual H.noSrcSpan . H.Ident H.noSrcSpan
+
+boolH :: Bool -> H.Exp H.SrcSpanInfo
+boolH True = H.Con H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "True"
+boolH False = H.Con H.noSrcSpan $ H.UnQual H.noSrcSpan $ H.Ident H.noSrcSpan "False"
 
 debug :: (Monad m, Show a) => a -> m ()
 debug x = do
