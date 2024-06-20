@@ -1,9 +1,13 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Specializer where
+module Specializer (
+  specializer,
+  evalRWST,
+  lift
+) where
 
 import Language.Haskell.TH.Syntax
+import Control.Monad.RWS.Lazy (evalRWST)
 import qualified Control.Monad.RWS.Lazy as M
 import Data.Function ((&))
 import Debug.Trace (trace)
@@ -34,26 +38,10 @@ addSpecialized :: (SpecializerSignature, Name) -> SpecializerMonad ()
 addSpecialized entry = M.modify (<>[entry])
 
 
---specializer :: Maybe String -> SpecializerMonad Exp -> [Q Pat] -> [Q Exp] -> SpecializerMonad Exp
---specializer maybeName body pats args = do
-----  TODO: only add decl if not already defined, need signature
---  name <- case maybeName of
---    Just s -> pure $ mkName s
---    Nothing -> freshName "f"
---  pats' <- M.lift $ sequence pats
---  bodyExp <- body
---  let dec = FunD name [Clause pats' (NormalB bodyExp) []]
---  M.tell [dec]
---  return $ VarE name
-
-
 specializer :: SpecializerMonad Exp -> [Q Pat] -> [Q Exp] -> String -> Maybe String -> SpecializerMonad Exp
 specializer body pats args bodyGenName maybeName = do
---  TODO: only add decl if not already defined, need signature
---  TODO: create name from signature instead, if not possivle do as above
   argExps <- M.lift $ sequence args
   let signature = (bodyGenName, argExps)
---  debug signature
   lookupRes <- lookupSpecialized signature
   name <- case lookupRes of
     Nothing -> do

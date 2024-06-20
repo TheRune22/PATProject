@@ -59,7 +59,8 @@ main = do
 --  print [hModule| module Test where f = 1 |]
 --  print $ show $ H.PVar H.noSrcSpan $ H.Ident H.noSrcSpan "test"
 --  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs" (NameLookup $ H.Ident H.noSrcSpan "pow", [Static, Dynamic])
-  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Foo.hs" (NameLookup $ H.Ident H.noSrcSpan "foo", [Static, Dynamic, Dynamic])
+--  btaFile "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Foo.hs" "foo" [Static, Dynamic, Dynamic]
 --  parseTest "/home/runeebl/Documents/Datalogi/PAT/project/PATProject/programs/Pow.hs"
 --  print [hExp| Nothing |]
 --  print 1
+  btaCmd

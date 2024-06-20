@@ -23,6 +23,7 @@ import Data.Maybe (catMaybes, isJust)
 import Data.List (partition)
 import Control.Lens (both)
 import Data.Bifunctor (bimap, first, second)
+import System.Environment (getArgs)
 --import Data.List.NonEmpty
 
 
@@ -289,7 +290,11 @@ analyzeExp (App info exp1 exp2) =
           -- TODO: exploit that this cannot be recursive call when not already analyzed?
           lookupRes <- getSpecializerApp signature staticArgs nothingH
           case lookupRes of
-            Just specializerApp ->
+            Just (specializerApp, True) ->
+--            Unfolding call
+              pure (Dynamic, bracketTH $ spliceTH specializerApp)
+            Just (specializerApp, False) ->
+--            Not unfolding call
               pure (Dynamic, bracketTH $ applyToArgs (spliceTH specializerApp) (fmap spliceTH dynamicArgs))
             Nothing ->
               -- Function not found in module, probably an import, so dont specialize
@@ -308,6 +313,7 @@ analyzeExp (InfixApp info exp1 qOp exp2) = analyzeSimpleExp (\[e1, e2] -> InfixA
 -- TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
 -- TODO: Try self application to get missing cases
 analyzeExp (Paren info e) = analyzeSimpleExp (head >>> Paren info) [e]
+analyzeExp (ExpTypeSig info e t) = analyzeSimpleExp (head >>> \e' -> ExpTypeSig info e' t) [e]
 analyzeExp e = trace (show e) undefined
 -- TODO: bind static vars in dynamic let binding around this to use as default
 --analyzeExp e = pure (Dynamic, bracketTH e)
@@ -347,7 +353,7 @@ getMainSpecializer signature = do
   case lookupRes of
     Nothing ->
       pure Nothing
-    Just specializerApp ->
+    Just (specializerApp, _) ->
     -- TODO: get name from monad or elsewhere?
     -- TODO: add initial reader and state?
       let monadEval = applyToArgs (unQualVarH "evalRWST") [specializerApp, Tuple noSrcSpan Boxed [], List noSrcSpan []] in
@@ -357,33 +363,56 @@ getMainSpecializer signature = do
 
 
 -- TODO: add TemplateHaskell Language Extensions to generated file, import TH, define specializer and monad with instances
+-- Prelude:
+--{-# LANGUAGE TemplateHaskell #-}
+--import Specializer (specializer)
+--import Language.Haskell.TH.Syntax (lift)
+--import Control.Monad.RWS.Lazy (evalRWST)
 btaModule :: Module SrcSpanInfo -> BTASignature SrcSpanInfo -> Maybe (Module SrcSpanInfo)
 btaModule (Module info moduleHead pragmas imports decls) signature =
 -- TODO: set initial name
   case runRWS (getMainSpecializer signature) ((Module info moduleHead pragmas imports decls, unQualVarH "specializer", True, NameLookup $ Ident noSrcSpan "Test"), []) ([], []) of
     (Just mainDecl, _, generatedDecls) ->
-      Just $ Module info moduleHead pragmas imports (decls <> generatedDecls <> [mainDecl])
+       let specializerImport = ImportDecl {
+        importAnn = noSrcSpan,
+        importModule = ModuleName noSrcSpan "Specializer",
+        importQualified = False,
+        importSrc = False,
+        importSafe = False,
+        importPkg = Nothing,
+        importAs = Nothing,
+        importSpecs = Nothing
+      } in
+      Just $ Module info moduleHead (pragmas <> [LanguagePragma noSrcSpan [Ident noSrcSpan "TemplateHaskell"]]) (imports <> [specializerImport]) (decls <> generatedDecls <> [mainDecl])
     _ ->
       Nothing
 btaModule _ _ = undefined
 
 
-btaFile :: FilePath -> BTASignature SrcSpanInfo -> IO ()
-btaFile path signature = do
+btaFile :: FilePath -> String -> [BindingTime] -> IO ()
+btaFile path fName bts = do
   parsed <- parseFile path
   case parsed of
---    TODO: write file instead?
-    ParseOk m ->
-      case btaModule m signature of
-        Nothing -> print "Function not found in module"
+    ParseOk m -> do
+      putStrLn $ "Performing BTAfor signature " <> show (fName, bts) <> " in file " <> path
+      case btaModule m (NameLookup $ Ident noSrcSpan fName, bts) of
+        Nothing -> putStrLn "Function not found in module"
         Just newM -> do
           let baseName = takeWhile (/='.') path
           let newFilePath = baseName <> "_specialized.hs"
+          putStrLn $ "Saving result to " <> newFilePath
           writeFile newFilePath $ prettyPrint newM
     _ -> print parsed
 
 
-
+btaCmd :: IO ()
+btaCmd = do
+  args <- getArgs
+  case args of
+    (path : fName : btStrings) ->
+      let bts = fmap (\s -> if s == "1" then Static else Dynamic) btStrings in
+      btaFile path fName bts
+    _ -> putStrLn "Usage: BTA <file> <fName> <1|0>..."
 
 
 
@@ -420,24 +449,26 @@ findOrDefine signature = do
 
 
 -- TODO: replace lookup with this? merge with above?
-getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo))
+getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo, Bool))
 getSpecializerApp signature staticArgs maybeName = do
   lookupRes <- findOrDefine signature
   case lookupRes of
     Just ((bodyGenName, specializerName), dynamicPats) -> do
-      -- insert call to TH specializer function
-      specializerFunc <- getSpecializer
-      -- TODO: this is ideal but requires separate specializer for each signature
-      -- pure $ Just $ applyToArgs (unQualVarH specializerName) [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
-      let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
-      let staticArgsTH = fmap liftTH staticArgs
       unfoldingEnabled <- getUnfolding
       analyzedName <- getAnalyzed
       let recursiveCall = analyzedName == fst signature
-      if unfoldingEnabled && recursiveCall then
-        pure $ Just $ applyToArgs (unQualVarH bodyGenName) staticArgs
-      else
-        pure $ Just $ applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName, boolH False]
+      let shouldUnfold = unfoldingEnabled && recursiveCall
+      if shouldUnfold then
+        pure $ Just (applyToArgs (unQualVarH bodyGenName) staticArgs, True)
+      else do
+        -- insert call to TH specializer function
+        specializerFunc <- getSpecializer
+        -- TODO: this is ideal but requires separate specializer for each signature
+        -- pure $ Just $ applyToArgs (unQualVarH specializerName) [unQualVarH bodyGenName, listH dynamicPats, listH staticArgs]
+        let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
+        let staticArgsTH = fmap liftTH staticArgs
+--        TODO: also give specializer dynamic args and control unfolding from there?
+        pure $ Just (applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName], False)
   -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
   -- TODO: only unfold recursive calls?
     Nothing -> do
