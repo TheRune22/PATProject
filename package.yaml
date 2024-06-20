@@ -46,12 +46,13 @@ ghc-options:
 library:
   source-dirs:
     - src
-#    - programs
 
 executables:
   PATProject-exe:
     main:                Main.hs
-    source-dirs:         app
+    source-dirs:
+    - app
+    - test_programs
     ghc-options:
     - -threaded
     - -rtsopts
@@ -64,7 +65,9 @@ executables:
 tests:
   PATProject-test:
     main:                Spec.hs
-    source-dirs:         test
+    source-dirs:
+    - test
+    - specialized_programs
     ghc-options:
     - -threaded
     - -rtsopts

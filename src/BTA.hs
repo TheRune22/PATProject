@@ -389,19 +389,20 @@ btaModule (Module info moduleHead pragmas imports decls) signature =
 btaModule _ _ = undefined
 
 
-btaFile :: FilePath -> String -> [BindingTime] -> IO ()
-btaFile path fName bts = do
-  parsed <- parseFile path
+btaFile :: FilePath -> FilePath -> String -> [BindingTime] -> IO ()
+btaFile pathIn pathOut fName bts = do
+  parsed <- parseFile pathIn
   case parsed of
     ParseOk m -> do
-      putStrLn $ "Performing BTAfor signature " <> show (fName, bts) <> " in file " <> path
+      putStrLn $ "Performing BTAfor signature " <> show (fName, bts) <> " in file " <> pathIn
       case btaModule m (NameLookup $ Ident noSrcSpan fName, bts) of
         Nothing -> putStrLn "Function not found in module"
         Just newM -> do
-          let baseName = takeWhile (/='.') path
-          let newFilePath = baseName <> "_specialized.hs"
-          putStrLn $ "Saving result to " <> newFilePath
-          writeFile newFilePath $ prettyPrint newM
+          
+--          let baseName = takeWhile (/='.') path
+--          let newFilePath = baseName <> "_specialized.hs"
+          putStrLn $ "Saving result to " <> pathOut
+          writeFile pathOut $ prettyPrint newM
     _ -> print parsed
 
 
@@ -409,10 +410,10 @@ btaCmd :: IO ()
 btaCmd = do
   args <- getArgs
   case args of
-    (path : fName : btStrings) ->
+    (pathIn : pathOut : fName : btStrings) ->
       let bts = fmap (\s -> if s == "1" then Static else Dynamic) btStrings in
-      btaFile path fName bts
-    _ -> putStrLn "Usage: BTA <file> <fName> <1|0>..."
+      btaFile pathIn pathOut fName bts
+    _ -> putStrLn "Usage: BTA <pathIn> <pathOut> <fName> <1|0>..."
 
 
 
@@ -522,7 +523,8 @@ analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
 -- TODO: handle this? could reuse from prepMatch
 --prepDecl (PatBind info pat rhs Nothing) = undefined
 -- TODO: return Nothing as default instead?
-analyzeDecl _ = pure Nothing
+--analyzeDecl _ = pure Nothing
+analyzeDecl _ = undefined
 
 analyzePat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 analyzePat bt (PVar info name) = [(NameLookup name, bt)]

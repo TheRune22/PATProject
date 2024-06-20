@@ -1,2 +1,5 @@
 .stack-work/
+.idea/
 *~
+PATProject.cabal
+stack.yaml.lock

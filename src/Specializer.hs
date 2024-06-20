@@ -10,14 +10,10 @@ import Language.Haskell.TH.Syntax
 import Control.Monad.RWS.Lazy (evalRWST)
 import qualified Control.Monad.RWS.Lazy as M
 import Data.Function ((&))
-import Debug.Trace (trace)
+import Utils (debug)
 
 instance (M.MonadTrans t, Quote q) => Quote (t q) where
   newName s = M.lift $ newName s
-
-debug :: (Monad m, Show a) => a -> m ()
-debug x = do
-  trace (show x) $ pure ()
 
 
 type SpecializerSignature = (String, [Exp])
@@ -48,11 +44,12 @@ specializer body pats args bodyGenName maybeName = do
       createdName <- case maybeName of
         Just s -> pure $ mkName s
         Nothing -> freshName "f"
+      addSpecialized (signature, createdName)
       pats' <- M.lift $ sequence pats
       bodyExp <- body
       let dec = FunD createdName [Clause pats' (NormalB bodyExp) []]
       M.tell [dec]
-      addSpecialized (signature, createdName)
       pure createdName
-    Just existingName -> pure existingName
+    Just existingName ->
+      pure existingName
   pure $ VarE name
