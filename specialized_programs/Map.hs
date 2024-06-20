@@ -2,10 +2,10 @@
 module Map where
 import Specializer
 mapL op l
-  = if (l :: [Int]) == ([] :: [Int]) then ([] :: [Int]) else
+  = if l == ([] :: [Int]) then ([] :: [Int]) else
       op (head l) : mapL op (tail l)
 mapL_BodyGen_DynamicStatic l
-  = if (l :: [Int]) == ([] :: [Int]) then lift ([] :: [Int]) else
+  = if l == ([] :: [Int]) then lift ([] :: [Int]) else
       [|
         ($( [| op ($( lift (head l) )) |] )) :
           ($( [| ($( mapL_BodyGen_DynamicStatic (tail l) )) |] ))

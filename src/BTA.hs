@@ -309,7 +309,7 @@ analyzeExp (App info exp1 exp2) =
 analyzeExp (InfixApp info exp1 qOp exp2) = analyzeSimpleExp (\[e1, e2] -> InfixApp info e1 qOp e2) [exp1, exp2]
 --analyzeExp (Let info binds exp) = undefined
 --analyzeExp (Lambda info pats exp) = undefined
--- TODO: case, multiif, paren, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
+-- TODO: case, multiif, section, TH brackets/quotes, con, do, stmts (avoiding IO?)
 -- TODO: add more from https://hackage.haskell.org/package/haskell-src-exts-1.23.1/docs/Language-Haskell-Exts-Syntax.html#t:Exp
 -- TODO: Try self application to get missing cases
 analyzeExp (Paren info e) = analyzeSimpleExp (head >>> Paren info) [e]
@@ -528,6 +528,7 @@ analyzeDecl _ = undefined
 
 analyzePat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 analyzePat bt (PVar info name) = [(NameLookup name, bt)]
+-- TODO: only do simple pats?
 analyzePat bt (PApp info qName pats) = pats >>= analyzePat bt
 analyzePat bt (PTuple info boxed pats) = pats >>= analyzePat bt
 analyzePat bt (PList info pats) = pats >>= analyzePat bt
