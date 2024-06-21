@@ -20,7 +20,7 @@ $(Map.mainSpecializer "map123" ([1, 2, 3] :: [Int]))
 
 main :: IO ()
 main = do
-  test (Pow.pow 3 2) (square 2)
+  test (Pow.pow 2 3) (square 2)
   test (Foo.foo 2 3 4) (foo2 3 4)
   test (Find.find "abc" 'b') (findabc 'b')
   test (Find.find [1, 2, 3] 3) (find123 3)
