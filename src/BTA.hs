@@ -398,9 +398,6 @@ btaFile pathIn pathOut fName bts = do
       case btaModule m (NameLookup $ Ident noSrcSpan fName, bts) of
         Nothing -> putStrLn "Function not found in module"
         Just newM -> do
-          
---          let baseName = takeWhile (/='.') path
---          let newFilePath = baseName <> "_specialized.hs"
           putStrLn $ "Saving result to " <> pathOut
           writeFile pathOut $ prettyPrint newM
     _ -> print parsed
@@ -513,9 +510,6 @@ analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
     addDynamicPats (oldName, bts) dynamicPats
 
     analyzedRhs <- analyzeRhs division rhs
-    -- TODO: just discard dynamic pats, replace by simple var, or give to specializer somehow? need to be able to recover original structure and var names
-    -- TODO: could convert Pats to TH pats using PatBracket and pass as arguments here?
-    -- TODO: change name, i.e. add suffix to show body generating?
 --    TODO: fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats here or later?
     pure $ Just (dynamicPats, FunBind info1 [Match info2 (Ident noSrcSpan newName) staticPats analyzedRhs Nothing])
   else
@@ -529,9 +523,9 @@ analyzeDecl _ = undefined
 analyzePat :: BindingTime -> Pat SrcSpanInfo -> Division SrcSpanInfo
 analyzePat bt (PVar info name) = [(NameLookup name, bt)]
 -- TODO: only do simple pats?
-analyzePat bt (PApp info qName pats) = pats >>= analyzePat bt
-analyzePat bt (PTuple info boxed pats) = pats >>= analyzePat bt
-analyzePat bt (PList info pats) = pats >>= analyzePat bt
+--analyzePat bt (PApp info qName pats) = pats >>= analyzePat bt
+--analyzePat bt (PTuple info boxed pats) = pats >>= analyzePat bt
+--analyzePat bt (PList info pats) = pats >>= analyzePat bt
 ---- TODO: handle more cases
 analyzePat _ _ = undefined
 
@@ -571,29 +565,3 @@ applyToArgs = foldl (App noSrcSpan)
 
 splitByBTs :: [BindingTime] -> [a] -> ([a], [a])
 splitByBTs bts xs = bimap (fmap snd) (fmap snd) $ partition (fst >>> (==Static)) $ zip bts xs
-
-
--- TODO: check if actually needed elsewhere, could generalize to list?
--- Ensures that both expressions have same binding time, lifting Static to Dynamic if needed
---normalizeBT :: (Exp SrcSpanInfo, BindingTime) -> (Exp SrcSpanInfo, BindingTime) -> (Exp SrcSpanInfo, Exp SrcSpanInfo, BindingTime)
---normalizeBT (exp1, bt1) (exp2, bt2) =
---  case (bt1, bt2) of
---    (Static, Static) -> (exp1, exp2, Static)
---    (Static, Dynamic) -> (liftTH exp1, exp2, Dynamic)
---    (Dynamic, Static) -> (exp1, liftTH exp2, Dynamic)
----- TODO: Could potentially remove brackets here?
---    (Dynamic, Dynamic) -> (exp1, exp2, Dynamic)
-
-
--- TODO: rename to splice, wrap, insert?
--- TODO: what information is needed to determine whether to do nothing, lift, or splice?
--- Helper for composing TH expressions
---spliceExp :: BindingTime -> BindingTime -> Exp SrcSpanInfo -> Exp SrcSpanInfo
---spliceExp contextBT expBT exp =
---  case (contextBT, expBT) of
---    (Static, Static) -> spliceTH exp
-----    (Static, Dynamic) -> exp
-----    (Dynamic, Static) -> exp
-----    (Dynamic, Dynamic) -> exp
----- TODO: check this
---    _ -> exp

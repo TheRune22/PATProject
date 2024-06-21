@@ -1,13 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Find where
 import Specializer
-find l x
-  = if l == ([] :: [Int]) then (0 :: Int) else
-      if head l == x then (0 :: Int) else (1 :: Int) + find (tail l) x
-find_BodyGen_StaticDynamic l
-  = if l == ([] :: [Int]) then lift (0 :: Int) else
+find s x
+  = if null s then (0 :: Int) else
+      if head s == x then (0 :: Int) else (1 :: Int) + find (tail s) x
+find_BodyGen_StaticDynamic s
+  = if null s then lift (0 :: Int) else
       [|
-        if ($( [| ($( lift (head l) )) == ($( [| x |] )) |] )) then
+        if ($( [| ($( lift (head s) )) == ($( [| x |] )) |] )) then
           ($( lift (0 :: Int) )) else
           ($(
              [|
@@ -15,8 +15,8 @@ find_BodyGen_StaticDynamic l
                  ($(
                     [|
                       ($(
-                         specializer (find_BodyGen_StaticDynamic (tail l)) [[p| x |]]
-                           [lift (tail l)]
+                         specializer (find_BodyGen_StaticDynamic (tail s)) [[p| x |]]
+                           [lift (tail s)]
                            "find_BodyGen_StaticDynamic"
                            Nothing
                          ))

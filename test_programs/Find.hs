@@ -1,11 +1,11 @@
 module Find where
 
 
-find l x =
-  if l == ([] :: [Int]) then
+find s x =
+  if null s then
     (0 :: Int)
   else
-    if head l == x then
+    if head s == x then
       (0 :: Int)
     else
-      (1 :: Int) + find (tail l) x
+      (1 :: Int) + find (tail s) x
