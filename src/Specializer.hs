@@ -3,7 +3,9 @@
 module Specializer (
   specializer,
   evalRWST,
-  lift
+  lift,
+  SpecializerMonad,
+  Exp
 ) where
 
 import Language.Haskell.TH.Syntax
@@ -35,8 +37,8 @@ addSpecialized entry = M.modify (<>[entry])
 
 
 specializer :: SpecializerMonad Exp -> [Q Pat] -> [Q Exp] -> String -> Maybe String -> SpecializerMonad Exp
-specializer body pats args bodyGenName maybeName = do
-  argExps <- M.lift $ sequence args
+specializer body pats staticArgs bodyGenName maybeName = do
+  argExps <- M.lift $ sequence staticArgs
   let signature = (bodyGenName, argExps)
   lookupRes <- lookupSpecialized signature
   name <- case lookupRes of

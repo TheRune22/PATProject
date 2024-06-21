@@ -19,7 +19,7 @@ import Control.Arrow ((>>>))
 import Data.Function ((&))
 import Data.Functor.Syntax ((<$$>))
 import Control.Monad.Identity (Identity)
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe (catMaybes, isJust, fromMaybe)
 import Data.List (partition)
 import Control.Lens (both)
 import Data.Bifunctor (bimap, first, second)
@@ -225,10 +225,7 @@ analyzeExp (Lit info lit) = pure (Static, Lit info lit)
 -- Look up BT for vars
 analyzeExp (Var info qName) = do
   bt <- bindingTime qName
-  case bt of
--- TODO: handle case where this is a (recursive) function call? don't put brackets?
-    Static -> pure (Static, Var info qName)
-    Dynamic -> pure (Dynamic, bracketTH $ Var info qName)
+  pure (bt, Var info qName)
 -- Simple cases
 analyzeExp (NegApp info e) = analyzeSimpleExp (head >>> NegApp info) [e]
 analyzeExp (List info exps) = analyzeSimpleExp (List info) exps
@@ -288,7 +285,7 @@ analyzeExp (App info exp1 exp2) =
           let signature = (NameLookup name, bts)
           let (staticArgs, dynamicArgs) = splitByBTs bts analyzedExps
           -- TODO: exploit that this cannot be recursive call when not already analyzed?
-          lookupRes <- getSpecializerApp signature staticArgs nothingH
+          lookupRes <- getSpecializerApp signature staticArgs (Just dynamicArgs) nothingH
           case lookupRes of
             Just (specializerApp, True) ->
 --            Unfolding call
@@ -349,7 +346,7 @@ getMainSpecializer signature = do
   let staticArgNames = [1..numStaticArgs] & fmap (Ident noSrcSpan . ("arg" <>) . show)
   let staticArgPats = fmap (PVar noSrcSpan) staticArgNames
   let staticArgExps = fmap (Var noSrcSpan . UnQual noSrcSpan) staticArgNames
-  lookupRes <- getSpecializerApp signature staticArgExps $ justH $ Var noSrcSpan $ UnQual noSrcSpan specializedNameVarName
+  lookupRes <- getSpecializerApp signature staticArgExps Nothing $ justH $ Var noSrcSpan $ UnQual noSrcSpan specializedNameVarName
   case lookupRes of
     Nothing ->
       pure Nothing
@@ -447,17 +444,22 @@ findOrDefine signature = do
 
 
 -- TODO: replace lookup with this? merge with above?
-getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo, Bool))
-getSpecializerApp signature staticArgs maybeName = do
+getSpecializerApp :: BTASignature SrcSpanInfo -> [Exp SrcSpanInfo] -> Maybe [Exp SrcSpanInfo]  -> Exp SrcSpanInfo -> BTAMonad SrcSpanInfo r (Maybe (Exp SrcSpanInfo, Bool))
+getSpecializerApp signature staticArgs maybeDynamicArgs maybeName = do
   lookupRes <- findOrDefine signature
   case lookupRes of
     Just ((bodyGenName, specializerName), dynamicPats) -> do
       unfoldingEnabled <- getUnfolding
       analyzedName <- getAnalyzed
+--      TODO: try also unfolding nonrecursive calls
       let recursiveCall = analyzedName == fst signature
       let shouldUnfold = unfoldingEnabled && recursiveCall
+      let dynamicArgs = case maybeDynamicArgs of
+                          Just x -> x
+                          Nothing -> fmap (patToVar >>> bracketTH) dynamicPats
+      let bodyGenApp = applyToArgs (unQualVarH bodyGenName) (staticArgs <> dynamicArgs)
       if shouldUnfold then
-        pure $ Just (applyToArgs (unQualVarH bodyGenName) staticArgs, True)
+        pure $ Just (bodyGenApp, True)
       else do
         -- insert call to TH specializer function
         specializerFunc <- getSpecializer
@@ -466,7 +468,7 @@ getSpecializerApp signature staticArgs maybeName = do
         let dynamicPatsExps = fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats
         let staticArgsTH = fmap liftTH staticArgs
 --        TODO: also give specializer dynamic args and control unfolding from there?
-        pure $ Just (applyToArgs specializerFunc [applyToArgs (unQualVarH bodyGenName) staticArgs, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName], False)
+        pure $ Just (applyToArgs specializerFunc [bodyGenApp, listH dynamicPatsExps, listH staticArgsTH, stringH bodyGenName, maybeName], False)
   -- TODO: decide on unfolding here, or handle in specializer function? initially no unfolding?
   -- TODO: only unfold recursive calls?
     Nothing -> do
@@ -474,7 +476,9 @@ getSpecializerApp signature staticArgs maybeName = do
         pure Nothing
 
 
-
+patToVar :: Pat SrcSpanInfo -> Exp SrcSpanInfo
+patToVar (PVar info n) = Var info $ UnQual noSrcSpan n
+patToVar _ = undefined
 
 
 
@@ -510,8 +514,8 @@ analyzeDecl (FunBind info1 [Match info2 name pats rhs Nothing]) = do
     addDynamicPats (oldName, bts) dynamicPats
 
     analyzedRhs <- analyzeRhs division rhs
---    TODO: fmap (BracketExp noSrcSpan . PatBracket noSrcSpan) dynamicPats here or later?
-    pure $ Just (dynamicPats, FunBind info1 [Match info2 (Ident noSrcSpan newName) staticPats analyzedRhs Nothing])
+    -- TODO: add dynamic pats here? static before dynamic? should ensure fresh names
+    pure $ Just (dynamicPats, FunBind info1 [Match info2 (Ident noSrcSpan newName) (staticPats <> dynamicPats) analyzedRhs Nothing])
   else
     pure Nothing
 -- TODO: handle this? could reuse from prepMatch
