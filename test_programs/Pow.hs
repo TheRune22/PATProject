@@ -1,8 +1,8 @@
 module Pow where
 
 
-pow m n =
+pow n m =
   if m == (0 :: Int) then
     (1 :: Int)
   else
-    n * pow (m - (1 :: Int)) n
+    n * pow n (m - (1 :: Int))

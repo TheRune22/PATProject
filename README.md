@@ -13,7 +13,7 @@ For each argument to the function `<fName>`, a `1` should be supplied if the arg
 The files in the `specialized_programs` directory were generated using the following commands:
 
 ```bash
-stack run "test_programs/Pow.hs" "specialized_programs/Pow.hs" pow 1 0
+stack run "test_programs/Pow.hs" "specialized_programs/Pow.hs" pow 0 1
 stack run "test_programs/Foo.hs" "specialized_programs/Foo.hs" foo 1 0 0
 stack run "test_programs/Find.hs" "specialized_programs/Find.hs" find 1 0
 stack run "test_programs/Map.hs" "specialized_programs/Map.hs" mapL 0 1
