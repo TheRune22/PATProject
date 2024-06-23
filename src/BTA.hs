@@ -245,9 +245,8 @@ analyzeExp (If info condExp thenExp elseExp) = do
       (elseBT, elseExpAnalyzed) <- analyzeExp elseExp
       let thenExpMaybeLifted = liftIfStatic (thenBT, thenExpAnalyzed)
       let elseExpMaybeLifted = liftIfStatic (elseBT, elseExpAnalyzed)
-
-  --    pure (bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted), Dynamic)
-      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
+      pure (Dynamic, bracketTH $ If info (spliceTH condExpAnalyzed) (spliceTH thenExpMaybeLifted) (spliceTH elseExpMaybeLifted))
+--      pure (Dynamic, bracketTH $ If info $|$ condExpAnalyzed $|$ thenExpMaybeLifted $|$ elseExpMaybeLifted)
       )
   else do
     (thenBT, thenExpAnalyzed) <- analyzeExp thenExp
@@ -260,7 +259,6 @@ analyzeExp (If info condExp thenExp elseExp) = do
     else
       -- fully static if
       pure (Static, If info condExpAnalyzed thenExpAnalyzed elseExpAnalyzed)
-
 -- TODO: need to check for nested applications to get all arguments, but could maybe handle one at a time?
 analyzeExp (App info exp1 exp2) =
   let (funExp, exps) = simplifyApp (App info exp1 exp2) in
@@ -271,7 +269,7 @@ analyzeExp (App info exp1 exp2) =
     analyzeRes <- mapM analyzeExp exps
     let (bts, analyzedExps) = unzip analyzeRes
     funBT <- bindingTime qName
-    if funBT == Dynamic || all (==Dynamic) bts then
+    if funBT == Dynamic then
 --      Don't specialize, just insert dynamic call
       -- TODO: handle `all (==Dynamic) bts` case as part of spezializing?
       dynamicApp funExp analyzeRes

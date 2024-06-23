@@ -95,6 +95,8 @@ bracketTH e = H.BracketExp H.noSrcSpan $ H.ExpBracket H.noSrcSpan e
 --bracketTH e = H.fromParseResult $ H.parseExp $ show $ liftData e
 
 spliceTH :: H.Exp H.SrcSpanInfo -> H.Exp H.SrcSpanInfo
+-- Splice cancels out brackets, giving simpler output
+spliceTH (H.BracketExp info1 (H.ExpBracket info2 e)) = e
 -- TODO: only add parens where necessary?
 -- Add extra parenthesis just in case, since can be problematic in e.g. NegApp
 spliceTH e = H.Paren H.noSrcSpan $ H.SpliceExp H.noSrcSpan $ H.ParenSplice H.noSrcSpan e

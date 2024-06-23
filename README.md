@@ -22,3 +22,8 @@ stack run "test_programs/Map.hs" "specialized_programs/Map.hs" mapL 0 1
 The tests using these files can be run using `stack test`. 
 
 Optionally, `stack test --ghc-options -ddump-splices` can be used to show the code generated from splices.
+
+After analysis, the specializer can be called by importing the output module from analysis in a new file, 
+and writing for example `$(Pow.mainSpecializer "square" 3)` as a top-level declaration.
+This defines a new function `square`, corresponding to `pow` specialized to 3 as the secondary input, 
+which can then be called as a regular Haskell function.

@@ -7,4 +7,4 @@ pow n m =
   else
     n * pow n (m - (1 :: Int))
 
-foo x y z = (pow y x + pow x y) + (pow x x + pow z y) + (pow z x + pow y x)
+foo x y z = pow y x + pow x y + pow x x + pow z y + pow z x + pow y x + pow 2 3

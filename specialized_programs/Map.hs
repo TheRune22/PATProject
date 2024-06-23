@@ -7,8 +7,8 @@ mapL op l
 mapL_BodyGen_DynamicStatic l
   = if l == ([] :: [Int]) then lift ([] :: [Int]) else
       [|
-        ($( [| op ($( lift (head l) )) |] )) :
-          ($( [| ($( mapL_BodyGen_DynamicStatic (tail l) )) |] ))
+        op ($( lift (head l) )) :
+          ($( mapL_BodyGen_DynamicStatic (tail l) ))
         |]
 mainSpecializer name arg1
   = fmap snd
