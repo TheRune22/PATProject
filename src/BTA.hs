@@ -453,10 +453,10 @@ getSpecializerApp signature staticArgs maybeDynamicArgs maybeName = do
       analyzedName <- getAnalyzed
 --      TODO: try also unfolding nonrecursive calls
       let recursiveCall = analyzedName == fst signature
-      let shouldUnfold = unfoldingEnabled && recursiveCall
+      let shouldUnfold = unfoldingEnabled
       let dynamicArgs = case maybeDynamicArgs of
-                          Just x -> x
-                          Nothing -> fmap (patToVar >>> bracketTH) dynamicPats
+                          Just x | unfoldingEnabled -> x
+                          _ -> fmap (patToVar >>> bracketTH) dynamicPats
       let bodyGenApp = applyToArgs (unQualVarH bodyGenName) (staticArgs <> dynamicArgs)
       if shouldUnfold then
         pure $ Just (bodyGenApp, True)

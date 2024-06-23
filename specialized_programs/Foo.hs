@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Foo where
 import Specializer
+import Language.Haskell.TH.Syntax (Q)
 pow n m
   = if m == (0 :: Int) then (1 :: Int) else
       n * pow n (m - (1 :: Int))
@@ -12,6 +13,7 @@ pow_BodyGen_DynamicStatic m n
         ($( n )) *
           ($( [| ($( pow_BodyGen_DynamicStatic (m - (1 :: Int)) n )) |] ))
         |]
+pow_BodyGen_StaticDynamic :: Int -> SpecializerMonad Exp -> SpecializerMonad Exp
 pow_BodyGen_StaticDynamic n m
   = [|
       if ($( [| ($( m )) == ($( lift (0 :: Int) )) |] )) then
@@ -22,10 +24,7 @@ pow_BodyGen_StaticDynamic n m
                ($(
                   [|
                     ($(
-                       specializer
-                         (pow_BodyGen_StaticDynamic n
-                            [| (($( [| ($( m )) - ($( lift (1 :: Int) )) |] ))) |])
-                         [[p| m |]]
+                       specializer (pow_BodyGen_StaticDynamic n [| m |]) [[p| m |]]
                          [lift n]
                          "pow_BodyGen_StaticDynamic"
                          Nothing
@@ -44,27 +43,8 @@ foo_BodyGen_StaticDynamicDynamic x y z
               [|
                 (($(
                     [|
-                      ($(
-                         [|
-                           ($(
-                              specializer (pow_BodyGen_DynamicStatic x y) [[p| n |]] [lift x]
-                                "pow_BodyGen_DynamicStatic"
-                                Nothing
-                              ))
-                             ($( y ))
-                           |]
-                         ))
-                        +
-                        ($(
-                           [|
-                             ($(
-                                specializer (pow_BodyGen_StaticDynamic x y) [[p| m |]] [lift x]
-                                  "pow_BodyGen_StaticDynamic"
-                                  Nothing
-                                ))
-                               ($( y ))
-                             |]
-                           ))
+                      ($( [| ($( pow_BodyGen_DynamicStatic x y )) |] )) +
+                        ($( [| ($( pow_BodyGen_StaticDynamic x y )) |] ))
                       |]
                     )))
                 |]
@@ -84,27 +64,8 @@ foo_BodyGen_StaticDynamicDynamic x y z
            [|
              (($(
                  [|
-                   ($(
-                      [|
-                        ($(
-                           specializer (pow_BodyGen_DynamicStatic x z) [[p| n |]] [lift x]
-                             "pow_BodyGen_DynamicStatic"
-                             Nothing
-                           ))
-                          ($( z ))
-                        |]
-                      ))
-                     +
-                     ($(
-                        [|
-                          ($(
-                             specializer (pow_BodyGen_DynamicStatic x y) [[p| n |]] [lift x]
-                               "pow_BodyGen_DynamicStatic"
-                               Nothing
-                             ))
-                            ($( y ))
-                          |]
-                        ))
+                   ($( [| ($( pow_BodyGen_DynamicStatic x z )) |] )) +
+                     ($( [| ($( pow_BodyGen_DynamicStatic x y )) |] ))
                    |]
                  )))
              |]
@@ -112,12 +73,6 @@ foo_BodyGen_StaticDynamicDynamic x y z
       |]
 mainSpecializer name arg1
   = fmap snd
-      (evalRWST
-         (specializer
-            (foo_BodyGen_StaticDynamicDynamic arg1 [| y |] [| z |])
-            [[p| y |], [p| z |]]
-            [lift arg1]
-            "foo_BodyGen_StaticDynamicDynamic"
-            (Just name))
+      (evalRWST (foo_BodyGen_StaticDynamicDynamic arg1 [| y |] [| z |])
          ()
          [])
