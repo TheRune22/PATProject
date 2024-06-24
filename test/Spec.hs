@@ -3,7 +3,6 @@ import qualified Find
 import qualified Foo
 import qualified Pow
 import qualified Map
---import qualified Partial
 
 
 test :: (Eq a, Show a) => a -> a -> IO ()
@@ -16,7 +15,7 @@ $(Foo.mainSpecializer "foo2" 2)
 $(Find.mainSpecializer "findabc" "abc")
 $(Find.mainSpecializer "find123" ([1, 2, 3] :: [Int]))
 $(Map.mainSpecializer "map123" ([1, 2, 3] :: [Int]))
--- $(Partial.mainSpecializer "squareList" 3)
+
 
 main :: IO ()
 main = do
@@ -25,4 +24,4 @@ main = do
   test (Find.find "abc" 'b') (findabc 'b')
   test (Find.find [1, 2, 3] 3) (find123 3)
   test (Map.mapL (+1) [1, 2, 3]) (map123 (+1))
---  test (Partial.powList 3 [1, 2, 3]) (squareList [1, 2, 3])
+

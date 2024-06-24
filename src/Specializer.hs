@@ -9,8 +9,6 @@ module Specializer (
 import Language.Haskell.TH.Syntax
 import Control.Monad.RWS.Lazy (evalRWST)
 import qualified Control.Monad.RWS.Lazy as M
-import Data.Function ((&))
-import Utils (debug)
 
 instance (M.MonadTrans t, Quote q) => Quote (t q) where
   newName s = M.lift $ newName s
@@ -19,8 +17,6 @@ instance (M.MonadTrans t, Quote q) => Quote (t q) where
 type SpecializerSignature = (String, [Exp])
 
 
--- TODO: remove unused parts
--- TODO: add Q to Dec? writer
 type SpecializerMonad = M.RWST () [Dec] [(SpecializerSignature, Name)] Q
 
 freshName :: String -> SpecializerMonad Name
